@@ -1,0 +1,29 @@
+### 构建产物 ###
+build/
+out/
+bin/
+target/
+
+### Gradle ###
+.gradle/
+_dists_cache/
+
+### IDE ###
+.idea/
+*.iml
+.vscode/
+.trae/
+.classpath
+.project
+.settings/
+
+### 本地历史快照 / 检查目录（不属于源码） ###
+_insp*/
+_inspect*/
+
+### 日志 ###
+*.log
+
+### 系统 ###
+.DS_Store
+Thumbs.db

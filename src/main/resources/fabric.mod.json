@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "simplep2p",
+  "version": "1.0.0",
+  "name": "简易联机",
+  "description": "简易联机Mod。通过房间码进行P2P直连，打洞失败自动中继；支持EasyTier(免Token)与OpenP2P(带Token)双模式，无需公网IP和端口映射即可与好友联机。",
+  "authors": ["简易联机 Team"],
+  "contact": {
+    "homepage": "https://github.com/simple_p2p",
+    "sources": "https://github.com/simple_p2p"
+  },
+  "license": "MIT",
+  "icon": "",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.simple_p2p.SimpleP2PMod"],
+    "client": ["com.simple_p2p.SimpleP2PMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.11.0",
+    "minecraft": "*"
+  },
+  "custom": {
+    "modmenu": {
+      "links": {
+        "OpenP2P 注册获取 Token": "https://openp2p.cn/register"
+      }
+    }
+  }
+}

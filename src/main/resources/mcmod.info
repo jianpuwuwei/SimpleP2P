@@ -1,0 +1,30 @@
+[
+  {
+    "modid": "simplep2p",
+    "name": "简易联机",
+    "description": "简易联机Mod。通过房间码进行P2P直连，打洞失败自动中继；支持EasyTier(免Token)与OpenP2P(带Token)双模式，无需公网IP和端口映射即可与好友联机。",
+    "version": "1.0.0",
+    "mcversion": "1.12.2",
+    "url": "https://github.com/simple_p2p",
+    "updateUrl": "",
+    "authorList": ["简易联机 Team"],
+    "credits": "基于UDP打洞和自动中继实现",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  },
+  {
+    "modid": "simplep2p",
+    "name": "简易联机",
+    "description": "简易联机Mod，通过房间码实现P2P直连联机",
+    "version": "1.0.0",
+    "mcversion": "1.7.10",
+    "url": "https://github.com/simple_p2p",
+    "updateUrl": "",
+    "authorList": ["简易联机 Team"],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]
