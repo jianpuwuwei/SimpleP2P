@@ -166,6 +166,9 @@ public class SimpleP2PConfigScreen extends Screen {
             }
             case STRING: {
                 EditBox box = new EditBox(font, x, y, WIDGET_W, 18, Component.literal(o.label));
+                // EditBox 默认 maxLength 只有 32，而 setValue 会直接截断并回调 responder，
+                // 不放开的话像节点列表地址这种长字符串一打开界面就被截短写回配置
+                box.setMaxLength(256);
                 box.setValue(o.value());
                 box.setResponder(o::set);
                 return box;
