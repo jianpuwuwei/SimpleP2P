@@ -56,6 +56,7 @@ If the actual MC port is not 25565, run `/p2p setport <port>` before opening the
 | `/p2p close` | Close the room |
 | `/p2p status` | Show room and network status |
 | `/p2p setport <port>` | Set the local MC port (default 25565) |
+| `/p2p autoopen on\|off` | Open the room automatically after server start / LAN publish (default off) |
 | `/p2p settoken <token>` | Set an OpenP2P token (optional fallback channel) |
 | `/p2p sslignore on\|off` | Whether to skip SSL verification when downloading core files |
 

@@ -86,6 +86,8 @@ public class P2PServerCommands {
                 return cmdSetPort(parts);
             case "autoport":
                 return cmdAutoPort(parts);
+            case "autoopen":
+                return cmdAutoOpen(parts);
             case "settoken":
                 return cmdSetToken(parts);
             case "token":
@@ -281,6 +283,20 @@ public class P2PServerCommands {
                 + "，下次 /p2p open 时生效");
     }
 
+    /** /p2p autoopen <on|off>：服务器加载完成或本地开放局域网后是否自动开房。 */
+    private CommandResult cmdAutoOpen(String[] parts) {
+        if (parts.length < 2) {
+            return CommandResult.success(
+                    "自动开房: " + (config.isAutoOpenRoom() ? "开启" : "关闭"),
+                    "用法: /p2p autoopen <on|off>",
+                    "开启后：专用服务器加载完成、或单人世界对局域网开放时自动开房"
+            );
+        }
+        boolean on = "on".equalsIgnoreCase(parts[1]) || "true".equalsIgnoreCase(parts[1]);
+        config.setAutoOpenRoom(on);
+        return CommandResult.success("自动开房已" + (on ? "开启" : "关闭"));
+    }
+
     private CommandResult cmdSetToken(String[] parts) {
         if (parts.length < 2) return CommandResult.fail("用法: /p2p settoken <你的OpenP2P Token>");
         StringBuilder sb = new StringBuilder();
@@ -329,6 +345,7 @@ public class P2PServerCommands {
                 "/p2p status              查看P2P状态",
                 "/p2p setport <端口>      设置MC本地服务端口（默认25565）",
                 "/p2p autoport <on|off>  开关自动检测MC端口（默认开启）",
+                "/p2p autoopen <on|off>  开关自动开房（默认关闭）",
                 "/p2p settoken <Token>    设置OpenP2P Token",
                 "/p2p token               查看Token状态和注册地址",
                 "/p2p sslignore <on|off>  下载时是否忽略SSL证书校验（默认关闭）",

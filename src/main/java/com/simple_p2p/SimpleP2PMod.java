@@ -132,7 +132,8 @@ public class SimpleP2PMod {
 
     private static final SuggestionProvider<CommandSourceStack> SUBCOMMAND_SUGGESTIONS = (ctx, builder) ->
             SharedSuggestionProvider.suggest(new String[]{
-                "open", "setcode", "close", "mode", "status", "setport", "autoport", "settoken", "token", "sslignore", "help"
+                "open", "setcode", "close", "mode", "status", "setport", "autoport", "autoopen",
+                "settoken", "token", "sslignore", "help"
             }, builder);
 
     @SubscribeEvent
@@ -213,6 +214,17 @@ public class SimpleP2PMod {
                                 .executes(ctx -> reply(ctx, registeredCommandsRef.execute(
                                         senderName(ctx),
                                         "autoport " + StringArgumentType.getString(ctx, "toggle")),
+                                        false))))
+                // /p2p autoopen <on|off>
+                .then(Commands.literal("autoopen")
+                        .executes(ctx -> reply(ctx, registeredCommandsRef.execute(
+                                senderName(ctx), "autoopen"), false))
+                        .then(Commands.argument("toggle", StringArgumentType.word())
+                                .suggests((ctx, b) -> SharedSuggestionProvider.suggest(
+                                        new String[]{"on", "off"}, b))
+                                .executes(ctx -> reply(ctx, registeredCommandsRef.execute(
+                                        senderName(ctx),
+                                        "autoopen " + StringArgumentType.getString(ctx, "toggle")),
                                         false))))
                 // /p2p open [房间号]
                 .then(Commands.literal("open")

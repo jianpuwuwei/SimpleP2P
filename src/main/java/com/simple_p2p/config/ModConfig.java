@@ -563,7 +563,7 @@ public class ModConfig {
     public boolean isAutoDetectMcPort() { return autoDetectMcPort; }
     public void setAutoDetectMcPort(boolean v) { this.autoDetectMcPort = v; save(); }
     public boolean isAutoOpenRoom() { return autoOpenRoom; }
-    public void setAutoOpenRoom(boolean v) { this.autoOpenRoom = v; }
+    public void setAutoOpenRoom(boolean v) { this.autoOpenRoom = v; save(); }
     public String getOpenP2PToken() { return openP2PToken; }
     public String getOpenP2PRegisterUrl() { return openP2PRegisterUrl; }
     public String getSignalingServerHost() { return signalingServerHost; }
