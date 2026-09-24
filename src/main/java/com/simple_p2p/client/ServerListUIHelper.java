@@ -46,7 +46,7 @@ public class ServerListUIHelper {
 
     /** 加入服务器：通过官方客户端组网，返回可连接地址。 */
     public JoinAction onJoinServer(String roomCode) {
-        ClientConnectionManager.ConnectFinalResult r = connMgr.connectAuto(roomCode);
+        ClientConnectionManager.ConnectFinalResult r = connMgr.connectByConfiguredMode(roomCode);
         if (r.success) return JoinAction.proxyAddress(r.localProxyHost, r.localProxyPort, r);
         return JoinAction.fail(r.errorMessage);
     }

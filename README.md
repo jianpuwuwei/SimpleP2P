@@ -18,6 +18,8 @@ is not required.
 - Automatically downloads, installs and launches the EasyTier official client, so no manual
   virtual adapter or port-forwarding setup is required
 - Fetches community public nodes, measures their latency, and connects to the reachable ones
+- Room-code connections can use EasyTier or OpenP2P; OpenP2P is only offered when a token is
+  configured, otherwise EasyTier is used directly
 - Connection progress and failure reasons are shown as in-game toasts in the top right corner
 - A single jar works for both client and server
 

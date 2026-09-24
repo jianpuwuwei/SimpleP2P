@@ -165,6 +165,9 @@ public class ModConfig {
     /** 用户是否手动切换过地址模式；false 时按输入内容自动识别。 */
     private boolean clientAddressModeManual = false;
 
+    /** 房间码连接方式：auto（ET 优先，失败回退 OpenP2P）/ easytier / openp2p。 */
+    private String clientConnectMode = "auto";
+
     // ================== 构造与加载 ==================
 
     private ModConfig() {
@@ -230,6 +233,7 @@ public class ModConfig {
         m.put("nodePool", new ArrayList<>(nodePool));
         m.put("clientAddressMode", clientAddressMode);
         m.put("clientAddressModeManual", clientAddressModeManual);
+        m.put("clientConnectMode", clientConnectMode);
         List<Map<String, Object>> list = new ArrayList<>();
         for (SavedServerEntry e : savedRoomServers) {
             Map<String, Object> em = new LinkedHashMap<>();
@@ -317,6 +321,14 @@ public class ModConfig {
         String cam = SimpleJson.getStr(m, "clientAddressMode");
         this.clientAddressMode = "ip".equalsIgnoreCase(cam) ? "ip" : "room";
         this.clientAddressModeManual = Objects.equals(Boolean.TRUE, m.get("clientAddressModeManual"));
+        String ccm = SimpleJson.getStr(m, "clientConnectMode");
+        if ("easytier".equalsIgnoreCase(ccm)) {
+            this.clientConnectMode = "easytier";
+        } else if ("openp2p".equalsIgnoreCase(ccm)) {
+            this.clientConnectMode = "openp2p";
+        } else {
+            this.clientConnectMode = "auto";
+        }
         // saved servers
         List<SavedServerEntry> entries = new ArrayList<>();
         Object list = m.get("savedRoomServers");
@@ -635,6 +647,21 @@ public class ModConfig {
     public void setClientAddressMode(String v) { this.clientAddressMode = "ip".equalsIgnoreCase(v) ? "ip" : "room"; }
     public boolean isClientAddressModeManual() { return clientAddressModeManual; }
     public void setClientAddressModeManual(boolean v) { this.clientAddressModeManual = v; }
+
+    public String getClientConnectMode() { return clientConnectMode; }
+    public void setClientConnectMode(String v) { this.clientConnectMode = v == null ? "auto" : v.trim(); save(); }
+
+    /** 房间码连接方式；选了 OpenP2P 但没填 Token 时直接用 EasyTier。 */
+    public static String clientConnectMode() {
+        ModConfig c = getInstance();
+        return openP2PChosenWithoutToken() ? "easytier" : c.clientConnectMode;
+    }
+
+    /** 选了 OpenP2P 连接但没填 Token（此时会改用 EasyTier）。 */
+    public static boolean openP2PChosenWithoutToken() {
+        ModConfig c = getInstance();
+        return "openp2p".equals(c.clientConnectMode) && !c.hasOpenP2PToken();
+    }
 
     /**
      * 是否按房间号处理地址输入：用户手动切换过就按切换结果；

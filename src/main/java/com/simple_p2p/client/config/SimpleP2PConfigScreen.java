@@ -51,6 +51,9 @@ public class SimpleP2PConfigScreen extends Screen {
                         cfg.setClientAddressMode("房间号".equals(v) ? "room" : "ip");
                     }
                 }));
+        options.add(ConfigOption.choice("房间码连接方式", connectModeChoices(),
+                this::connectModeDisplay,
+                v -> cfg.setClientConnectMode(connectModeId(v))));
         options.add(ConfigOption.choice("服务端模式",
                 new String[]{P2PMode.BOTH.getDisplayName(), P2PMode.EASYTIER_ONLY.getDisplayName(), P2PMode.OPENP2P_ONLY.getDisplayName()},
                 () -> cfg.getServerMode().getDisplayName(),
@@ -96,6 +99,27 @@ public class SimpleP2PConfigScreen extends Screen {
             if (m.getDisplayName().equals(display)) return m.getId();
         }
         return P2PMode.BOTH.getId();
+    }
+
+    /** 没填 OpenP2P Token 时不提供 OpenP2P 选项。 */
+    private String[] connectModeChoices() {
+        if (cfg.hasOpenP2PToken()) {
+            return new String[]{"自动（ET 优先）", "仅 EasyTier", "仅 OpenP2P"};
+        }
+        return new String[]{"自动（ET 优先）", "仅 EasyTier"};
+    }
+
+    private String connectModeDisplay() {
+        String mode = cfg.getClientConnectMode();
+        if ("easytier".equals(mode)) return "仅 EasyTier";
+        if ("openp2p".equals(mode) && cfg.hasOpenP2PToken()) return "仅 OpenP2P";
+        return "自动（ET 优先）";
+    }
+
+    private static String connectModeId(String display) {
+        if ("仅 EasyTier".equals(display)) return "easytier";
+        if ("仅 OpenP2P".equals(display)) return "openp2p";
+        return "auto";
     }
 
     private void save() {

@@ -34,7 +34,7 @@ public class ClientP2PEntry {
         if (!r.isRoomCode) return null;
 
         ensureInit();
-        ClientConnectionManager.ConnectFinalResult result = cm.connectAuto(r.address);
+        ClientConnectionManager.ConnectFinalResult result = cm.connectByConfiguredMode(r.address);
         if (result.success) {
             return new ConnectResult(true, result.localProxyHost, result.localProxyPort, null);
         }

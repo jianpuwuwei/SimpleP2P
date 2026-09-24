@@ -105,6 +105,17 @@ public class ClientConnectionManager {
         return doConnect(roomCode, "auto");
     }
 
+    /** 按配置里的房间码连接方式组网：auto / easytier / openp2p。 */
+    public ConnectFinalResult connectByConfiguredMode(String roomCode) {
+        if (ModConfig.openP2PChosenWithoutToken()) {
+            ToastHelper.show("SimpleP2P", "未设置 OpenP2P Token，改用 EasyTier");
+        }
+        String mode = ModConfig.clientConnectMode();
+        if ("easytier".equals(mode)) return connectEasyTier(roomCode);
+        if ("openp2p".equals(mode)) return connectOpenP2P(roomCode, null);
+        return connectAuto(roomCode);
+    }
+
     private ConnectFinalResult doConnect(String roomCode, String mode) {
         int mcPort = config.getServerLocalPort();
         // 组网过程较长（选节点 / 下载核心 / 等待服务端 / 建立转发），把每一步进度
