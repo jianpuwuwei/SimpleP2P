@@ -34,17 +34,24 @@ public abstract class ConnectScreenMixin {
             return;
         }
 
-        String ip = data.ip;
-        if (ip == null || ip.isBlank()) return;
-        // 地址模式为 IP 时不做房间号识别
-        if (!ModConfig.roomCodeMode()) return;
+        // 识别阶段出错就按原版地址走，不能把游戏带崩
+        final String roomCode;
+        try {
+            String ip = data.ip;
+            if (ip == null || ip.isBlank()) return;
+            // 地址模式为 IP 时不做房间号识别
+            if (!ModConfig.roomCodeMode()) return;
 
-        AddressRecognizer.RecognizeResult r = AddressRecognizer.recognize(ip);
-        if (!r.isRoomCode) return;
+            AddressRecognizer.RecognizeResult r = AddressRecognizer.recognize(ip);
+            if (!r.isRoomCode) return;
+            roomCode = r.address;
+        } catch (Throwable t) {
+            System.err.println("[SimpleP2P] 房间号识别失败，按原版地址处理: " + t);
+            return;
+        }
 
         // 立即取消，避免 MC 拿房间号去做 DNS 解析
         ci.cancel();
-        final String roomCode = r.address;
         ToastHelper.show("SimpleP2P", "正在组网...");
 
         // 组网含下载/进程启动/就绪轮询，可能耗时较久，放到后台线程

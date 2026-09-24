@@ -22,7 +22,14 @@ public abstract class ServerPingerMixin {
         String ip = data.ip;
         if (ip == null || ip.isBlank()) return;
 
-        ClientP2PEntry.PingResult result = ClientP2PEntry.ping(ip);
+        // 探测出错就交给 MC 原版 ping，不能把游戏带崩
+        ClientP2PEntry.PingResult result;
+        try {
+            result = ClientP2PEntry.ping(ip);
+        } catch (Throwable t) {
+            System.err.println("[SimpleP2P] 房间码探测失败，按原版处理: " + t);
+            return;
+        }
         if (result == null || !result.handled) {
             // 不是房间码，交给 MC 原版 ping
             return;

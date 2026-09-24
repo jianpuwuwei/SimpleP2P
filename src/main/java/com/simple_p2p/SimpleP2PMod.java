@@ -8,7 +8,6 @@ import com.simple_p2p.config.ModConfig;
 import com.simple_p2p.ext.ExternalNetManager;
 import com.simple_p2p.ext.NetUtils;
 import com.simple_p2p.signaling.EmbeddedSignaling;
-import com.simple_p2p.util.LanPortTracker;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -58,6 +57,9 @@ public class SimpleP2PMod {
     public static P2PServerCommands registeredCommandsRef;
     public static ServerListUIHelper serverListUIHelperRef;
     public static ClientConnectionManager clientConnectionManagerRef;
+
+    /** 单人世界已开放的局域网端口，&lt;=0 表示未开放；由客户端 tick 轮询写入。 */
+    public static volatile int lanPort = -1;
 
     private static SimpleP2PMod INSTANCE;
 
@@ -255,8 +257,8 @@ public class SimpleP2PMod {
 
     /**
      * 执行命令前检测当前 MC 端口。
-     * 专用服务器取 server.getPort()；单人世界取“对局域网开放”时由
-     * {@link com.simple_p2p.mixin.IntegratedServerMixin} 记录的端口（未开放前 getPort() 为 0）。
+     * 专用服务器取 server.getPort()；单人世界取“对局域网开放”后由客户端轮询写入的 {@link #lanPort}
+     * （IntegratedServer.getPort() 在开放前返回 -1）。
      */
     private static void autoDetectPort(CommandContext<CommandSourceStack> ctx) {
         if (registeredCommandsRef == null) return;
@@ -265,7 +267,7 @@ public class SimpleP2PMod {
             MinecraftServer server = ctx.getSource().getServer();
             if (server != null && server.getPort() > 0) port = server.getPort();
         } catch (Throwable ignored) {}
-        if (port <= 0) port = LanPortTracker.getLanPort();
+        if (port <= 0) port = lanPort;
 
         if (port > 0) {
             registeredCommandsRef.setAutoMcPort(port);

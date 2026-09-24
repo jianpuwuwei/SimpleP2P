@@ -1,6 +1,7 @@
 package com.simple_p2p.client;
 
 import com.simple_p2p.AutoRoomOpener;
+import com.simple_p2p.SimpleP2PMod;
 import com.simple_p2p.client.config.SimpleP2PConfigScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
@@ -9,10 +10,12 @@ import net.minecraft.client.gui.screens.DirectJoinServerScreen;
 import net.minecraft.client.gui.screens.EditServerScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
+import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.network.chat.Component;
 import net.minecraftforge.client.ConfigScreenHandler;
 import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.ModLoadingContext;
 
@@ -26,6 +29,7 @@ public final class ClientSetup {
     /** 注册 Forge 事件监听（仅客户端调用）。 */
     public static void init() {
         MinecraftForge.EVENT_BUS.register(new ScreenHooks());
+        MinecraftForge.EVENT_BUS.register(new LanPortWatcher());
         AutoRoomOpener.setNotifier(ClientSetup::notifyClient);
     }
 
@@ -100,6 +104,36 @@ public final class ClientSetup {
                 if (l instanceof Button b && b.getMessage().getString().equals(want)) return b;
             }
             return null;
+        }
+    }
+
+    /**
+     * 轮询单人世界的局域网端口。
+     * <p>{@code IntegratedServer.getPort()} 返回的是 publishedPort：未开放为 -1，开放后才变成实际端口，
+     * 所以每秒查一次即可，不必往 IntegratedServer 里注入 Mixin。
+     */
+    private static final class LanPortWatcher {
+
+        private static final int INTERVAL_TICKS = 20;
+
+        private int lastPort = -1;
+        private int ticks;
+
+        @SubscribeEvent
+        public void onClientTick(TickEvent.ClientTickEvent event) {
+            if (event.phase != TickEvent.Phase.END) return;
+            if (++ticks < INTERVAL_TICKS) return;
+            ticks = 0;
+
+            Minecraft mc = Minecraft.getInstance();
+            IntegratedServer server = mc.getSingleplayerServer();
+            int port = server == null ? -1 : server.getPort();
+            if (port == lastPort) return;
+
+            boolean justOpened = port > 0 && lastPort <= 0;
+            lastPort = port;
+            SimpleP2PMod.lanPort = port;
+            if (justOpened) AutoRoomOpener.trigger("已对局域网开放", port);
         }
     }
 }
