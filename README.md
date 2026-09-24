@@ -61,8 +61,8 @@ If the actual MC port is not 25565, run `/p2p setport <port>` before opening the
 
 ## How it works
 
-1. The room code derives the EasyTier network name and secret: `sp2p-<roomcode>` and
-   `sp2p:<roomcode>`
+1. The room code derives the EasyTier network name and secret: `sp2p-<roomcode>` and the
+   SHA-256 hex digest of the room code
 2. Both sides start the EasyTier client and join the same virtual network
 3. The server embeds its real MC port in the EasyTier hostname and exposes it with
    `--tcp-whitelist`

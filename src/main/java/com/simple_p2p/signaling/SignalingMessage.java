@@ -9,23 +9,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 信令协议消息定义
- * 用于客户端<->信令服务器，以及客户端之间交换打洞信息
+ * 信令协议消息定义，用于客户端<->信令服务器以及客户端之间交换打洞信息。
  *
- * 消息格式(JSON):
- * {
- *   "type": "REGISTER | CONNECT | PUNCH | RELAY | PROBE | ACK | ERROR",
- *   "token": "openp2p token (可为空表示easytier模式)",
- *   "roomCode": "房间号",
- *   "mode": "easytier | openp2p",
- *   "peerId": "节点唯一ID",
- *   "publicIp"/"publicPort"/"privateIp"/"privatePort": 打洞地址
- *   "supportsEasyTier"/"supportsOpenP2P": 支持的模式
- *   "timestamp": 探测用时间戳
- *   "mcPort"/"proxyPort": MC相关端口
- *   "errorMsg": 错误信息
- *   "extra": 其他自定义字段(Map<String,Object>)
- * }
+ * 消息格式(JSON): type / token / roomCode / mode / peerId /
+ * publicIp,publicPort,privateIp,privatePort / supportsEasyTier,supportsOpenP2P /
+ * timestamp / mcPort,proxyPort / errorMsg / extra
  */
 public class SignalingMessage {
 
@@ -127,9 +115,7 @@ public class SignalingMessage {
         socket.send(packet);
     }
 
-    /**
-     * @return [message, senderAddress, senderPort] 或 null超时
-     */
+    /** @return [message, senderAddress, senderPort]，超时返回 null。 */
     public static Object[] receiveUdp(DatagramSocket socket, int timeoutMs) throws IOException {
         socket.setSoTimeout(timeoutMs);
         byte[] buf = new byte[8192];

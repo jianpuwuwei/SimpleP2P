@@ -10,14 +10,8 @@ import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 纯 TCP 监听→转发代理。
- *
- * <p>用于 EasyTier 整合服场景：服务端只把 MC 绑在 127.0.0.1，而 EasyTier 虚拟 IP 需要
- * 从 10.144.144.1 访问 MC，本类把 {@code bindHost:bindPort} 收到的连接转发到
- * {@code targetHost:targetPort}（如 127.0.0.1:25565）。
- *
- * <p>不复用 {@link LocalTcpProxy}：它面向 {@link com.simple_p2p.p2p.ReliableUdpTunnel} 提供者，
- * 这里是纯 TCP→TCP，接口不匹配。
+ * 纯 TCP 监听→转发代理：把 {@code bindHost:bindPort} 收到的连接转发到 {@code targetHost:targetPort}
+ * （如 127.0.0.1:25565），用于 EasyTier 整合服场景。
  */
 public final class TcpForwarder {
 
@@ -44,7 +38,6 @@ public final class TcpForwarder {
                             .start();
                 } catch (IOException e) {
                     if (running.get()) {
-                        // ignore, continue
                     }
                 }
             }

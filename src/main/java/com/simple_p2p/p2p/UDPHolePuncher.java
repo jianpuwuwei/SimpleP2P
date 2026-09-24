@@ -9,13 +9,8 @@ import java.net.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * UDP打洞器
- *
- * 打洞流程：
- * 1. 信令服务器已告知双方对端的公网IP:Port和内网IP:Port
- * 2. 双方同时向对端的公网和内网地址发送多个"PUNCH" UDP包
- * 3. 只要任一方向收到对端回应的PUNCH_ACK，即打洞成功，后续所有数据走这条UDP通道
- * 4. 超时未成功，返回失败结果，由上层切换到中继模式
+ * UDP 打洞器：双方同时向对端的公网/内网地址发送 PUNCH 包，
+ * 收到任一 PUNCH_ACK 即打洞成功；超时失败由上层切换到中继模式。
  */
 public class UDPHolePuncher {
 
@@ -29,14 +24,11 @@ public class UDPHolePuncher {
         this.config = ModConfig.getInstance();
     }
 
-    /**
-     * 打洞结果
-     */
     public static class PunchResult {
         public final boolean success;
         public final ConnectionType connectionType;
         public final InetSocketAddress remoteAddress;
-        public final DatagramSocket socket; // 已建立连接的socket(打洞成功时可继续用)
+        public final DatagramSocket socket; // 打洞成功时可继续使用的 socket
         public final String errorMessage;
 
         PunchResult(boolean success, ConnectionType type, InetSocketAddress addr, DatagramSocket s, String err) {
@@ -56,16 +48,7 @@ public class UDPHolePuncher {
         }
     }
 
-    /**
-     * 执行打洞
-     * 作为主动方：向对端的公网和内网地址发送打洞包
-     *
-     * @param remotePublicIp   对端公网IP
-     * @param remotePublicPort 对端公网端口
-     * @param remotePrivateIp  对端内网IP
-     * @param remotePrivatePort 对端内网端口
-     * @return 打洞结果
-     */
+    /** 主动方打洞：向对端公网和内网地址发送打洞包，参数为对端公网/内网 IP:Port。 */
     public PunchResult punch(String remotePublicIp, int remotePublicPort,
                              String remotePrivateIp, int remotePrivatePort) {
         try {
@@ -114,7 +97,6 @@ public class UDPHolePuncher {
             Thread.sleep(500);
 
             if (punched.get() && successRemote != null) {
-                // 打洞成功，返回socket和地址
                 return PunchResult.successP2P(successRemote, socket);
             }
 
@@ -126,11 +108,7 @@ public class UDPHolePuncher {
         }
     }
 
-    /**
-     * 作为被动方(服务端)：等待客户端打洞包，回复ACK
-     *
-     * @return 成功后返回对端地址和已连接socket
-     */
+    /** 被动方（服务端）打洞：等待客户端打洞包并回复 ACK。 */
     public PunchResult waitForPunch(int localBindPort) {
         try {
             socket = new DatagramSocket(localBindPort > 0 ? localBindPort : 0);
@@ -186,7 +164,6 @@ public class UDPHolePuncher {
                     }
                 }
             } catch (Exception e) {
-                // receiver 退出
             }
         }, "AIO-P2P-HolePunch-Recv");
         receiverThread.setDaemon(true);

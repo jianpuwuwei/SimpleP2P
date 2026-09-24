@@ -3,10 +3,8 @@ package com.simple_p2p.util;
 import java.util.regex.Pattern;
 
 /**
- * 服务器地址智能识别工具
- * 判定逻辑：
- *  - 输入是合法IP:Port格式 或 域名:Port格式 → 普通MC服务器地址，不接管
- *  - 输入不是任何IP/域名格式 (只含字母数字，无点号冒号端口) → 判定为房间号，接管P2P流程
+ * 服务器地址智能识别工具：合法 IP/域名形式视为普通 MC 服务器地址；
+ * 非 IP/域名的纯字母数字串视为房间号，接管 P2P 流程。
  */
 public class AddressRecognizer {
 
@@ -35,9 +33,6 @@ public class AddressRecognizer {
             "^[A-Za-z0-9]{6,}$"
     );
 
-    /**
-     * 识别结果
-     */
     public static class RecognizeResult {
         public final boolean isRoomCode;     // 是否为房间号
         public final boolean isNormalAddress;// 是否为普通MC服务器地址(IP/域名)
@@ -54,9 +49,6 @@ public class AddressRecognizer {
         }
     }
 
-    /**
-     * 识别输入字符串是否为房间号
-     */
     public static RecognizeResult recognize(String input) {
         if (input == null) {
             return new RecognizeResult(false, false, null, null, 25565);
@@ -104,8 +96,7 @@ public class AddressRecognizer {
             return new RecognizeResult(true, false, trimmed, null, 25565);
         }
 
-        // 6. 包含特殊字符但也不像IP/域名(例如纯数字但长度不符) -> 视为房间号(只要不是明确的IP格式)
-        // 如果输入不含点号，也不含冒号(除了末尾可能的端口，但前面不是IP)，判定为房间号
+        // 6. 不含点号/冒号的输入 -> 视为房间号（非明确 IP 格式）
         if (!trimmed.contains(".") && !trimmed.contains(":")) {
             return new RecognizeResult(true, false, trimmed, null, 25565);
         }
@@ -114,9 +105,7 @@ public class AddressRecognizer {
         return new RecognizeResult(false, false, trimmed, null, 25565);
     }
 
-    /**
-     * 将 "host:port" 拆分为 [host, port]，缺省port=25565
-     */
+    /** 将 "host:port" 拆为 [host, port]，缺省 port=25565。 */
     private static String[] splitHostPort(String input) {
         int lastColon = input.lastIndexOf(':');
         if (lastColon > 0) {

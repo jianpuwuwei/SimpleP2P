@@ -4,13 +4,9 @@ import com.simple_p2p.config.ModConfig;
 import com.simple_p2p.proxy.UdpServerProbe;
 
 /**
- * 服务器列表UI交互逻辑辅助类（外部官方客户端版本）。
- *
- * <p>输入房间号 → 直接标记为 P2P 房间；加入时通过 {@link ClientConnectionManager#connectAuto}
- * 调用 EasyTier / OpenP2P 官方客户端组网，返回可连接的本地/虚拟地址。
- *
- * <p>{@link #refreshServer} 仍用 {@link UdpServerProbe} 做本机/局域网 UDP 探测（仅延迟展示用，
- * 不影响外网组网）。
+ * 服务器列表 UI 交互逻辑辅助类：输入房间号则标记为 P2P 房间，
+ * 加入时通过 {@link ClientConnectionManager#connectAuto} 组网并返回可连接地址；
+ * {@link #refreshServer} 用 {@link UdpServerProbe} 做本机/局域网探测（仅延迟展示）。
  */
 public class ServerListUIHelper {
 
@@ -38,7 +34,7 @@ public class ServerListUIHelper {
         return AddServerResult.savedRoomServer(displayName, roomCode, "?", "EasyTier/OpenP2P");
     }
 
-    /** 刷新单个房间服务器的状态（本机/局域网 UDP 探测，延迟展示用）。 */
+    /** 刷新单个房间服务器状态（本机/局域网 UDP 探测，仅延迟展示）。 */
     public UdpServerProbe.ProbeResult refreshServer(String roomCode) {
         UdpServerProbe probe = new UdpServerProbe();
         try {

@@ -19,8 +19,7 @@ public final class NetUtils {
         }
     }
 
-    /** 尝试在 host:port 上 bind 一个 ServerSocket。成功返回 socket（调用方负责关闭），
-     *  失败返回 null（说明端口已被占用/不可绑定）。 */
+    /** 尝试 bind host:port；成功返回 ServerSocket（调用方负责关闭），失败返回 null。 */
     public static ServerSocket tryBind(String host, int port) {
         try {
             ServerSocket ss = new ServerSocket();
@@ -41,10 +40,7 @@ public final class NetUtils {
         }
     }
 
-    /**
-     * Windows 下检测当前进程是否为管理员。非 Windows 恒返回 true（Linux/mac 无 UAC，由文件权限决定）。
-     * 通过 "net session" 退出码判断（非管理员会因权限不足失败）。
-     */
+    /** Windows 下通过 "net session" 退出码判断当前进程是否管理员；非 Windows 恒返回 true。 */
     public static boolean isAdminWindows() {
         if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
             try {

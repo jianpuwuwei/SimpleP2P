@@ -3,10 +3,8 @@ package com.simple_p2p.util;
 import java.util.*;
 
 /**
- * 轻量级JSON工具，替代Gson以避免编译期依赖Gson
- * Minecraft运行时自带Gson，但为了独立编译通过，提供简化版JSON序列化/反序列化
- * 支持：对象、数组、字符串、数字、布尔、null
- * 注意：不支持转义字符的完整规范，仅满足本项目简单需求
+ * 轻量级 JSON 工具，替代 Gson 以避免编译期依赖 Gson。
+ * 支持对象/数组/字符串/数字/布尔/null；不支持转义字符的完整规范，仅满足本项目简单需求。
  */
 public final class SimpleJson {
 

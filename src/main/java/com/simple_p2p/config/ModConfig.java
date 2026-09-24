@@ -8,9 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
- * Mod配置管理器
- * 负责持久化：房间号、token、服务端模式、信令/中继服务器地址
- * 配置文件位置：config/simplep2p.json
+ * Mod 配置，持久化到 config/simplep2p.json。
  */
 public class ModConfig {
 
@@ -20,164 +18,152 @@ public class ModConfig {
 
     // ================== 持久化字段 ==================
 
-    /**
-     * 服务端房间号（16位随机大小写字符，命令可修改）
-     */
+    /** 服务端房间号。 */
     private String serverRoomCode;
 
-    /**
-     * 服务端是否已开启房间
-     */
+    /** 服务端是否已开启房间。 */
     private boolean serverRoomOpened;
 
-    /**
-     * 服务端运行模式：默认双开
-     */
+    /** 服务端运行模式。 */
     private P2PMode serverMode = P2PMode.BOTH;
 
-    /**
-     * 服务端监听的本地MC端口（默认25565）
-     */
+    /** 服务端本地 MC 端口。 */
     private int serverLocalPort = 25565;
 
-    /**
-     * 是否自动检测 MC 服务端口（从运行中的服务端获取，而非配置文件）。
-     * 服务端是专用服务器时读取 server.properties 的端口；
-     * 客户端单人/局域网时读取 IntegratedServer 已开放的端口。
-     * 默认 true。如果 false 则使用 serverLocalPort。
-     */
+    /** 是否自动检测运行中的 MC 端口；false 时使用 serverLocalPort。 */
     private boolean autoDetectMcPort = true;
 
-    /**
-     * 客户端OpenP2P Token（空字符串表示未填写）
-     */
+    /** 服务器加载完成（专用服）或本地对局域网开放后，是否自动开启房间。 */
+    private boolean autoOpenRoom = false;
+
+    /** OpenP2P Token。 */
     private String openP2PToken = "";
 
-    /**
-     * OpenP2P注册/获取Token地址（用于小字提示）
-     */
+    /** OpenP2P Token 注册地址。 */
     private String openP2PRegisterUrl = "https://openp2p.cn/register";
 
-    /**
-     * 公共信令服务器地址。默认指向 127.0.0.1，配合随 MC 进程启动的内嵌信令使用，
-     * 彻底解决之前写死的 signaling.simple_p2p.local 根本不存在，导致“无论是否登录
-     * OpenP2P token / 切换 EasyTier 模式都提示无法连接信令服务器”的问题。
-     */
+    /** 信令服务器地址（内嵌信令默认本机）。 */
     private String signalingServerHost = "127.0.0.1";
     private int signalingServerPort = 7887;
 
-    /** 是否自动回退到本机 127.0.0.1 + 内嵌信令（当上面的地址无法建立连接时）。默认 true。 */
+    /** 信令连接失败时是否回退到本机内嵌信令。 */
     private boolean autoFallbackToLocalSignaling = true;
 
-    /** 内嵌信令默认 TCP 端口，通常与 signalingServerPort 默认保持一致即可。 */
+    /** 内嵌信令 TCP 端口。 */
     private int embeddedSignalingTcpPort = 7887;
 
-    /** 内嵌信令 UDP PROBE 监听端口；服务器列表“延迟”、房间码模式探测基于此端口。 */
+    /** 内嵌信令 UDP PROBE 端口（服务器列表延迟探测）。 */
     private int embeddedSignalingUdpProbePort = 7888;
 
-    /** 内嵌信令 UDP 是否允许本机以外的来源接入（同局域网）。 */
+    /** UDP PROBE 是否接受非本机来源。 */
     private boolean udpProbeListenAll = true;
 
-    /** 是否在 255.255.255.255:embeddedSignalingUdpProbePort 接收 LAN 广播探测（无需预知对端 IP）。 */
+    /** 是否接收 LAN 广播探测。 */
     private boolean lanBroadcastEnabled = true;
 
-    /**
-     * 公共中继服务器地址。默认跟随信令落在本机占位（内嵌信令暂不提供中继，留作自定义扩展）。
-     */
+    /** 中继服务器地址（保留）。 */
     private String relayServerHost = "127.0.0.1";
     private int relayServerPort = 7889;
 
-    /**
-     * EasyTier默认连接地址（直连模式）。默认指向本机占位（EasyTier/EasyTier SDK 需要自行
-     * 安装部署或在后续版本集成 SDK）。
-     */
+    /** EasyTier 直连地址（保留）。 */
     private String easyTierHost = "127.0.0.1";
     private int easyTierPort = 11010;
 
-    /**
-     * UDP打洞超时（毫秒）
-     */
+    /** UDP 打洞超时（毫秒）。 */
     private int holePunchTimeoutMs = 5000;
 
-    /**
-     * 打洞重试次数
-     */
+    /** UDP 打洞重试次数。 */
     private int holePunchRetries = 5;
 
-    /**
-     * 房间号长度
-     */
+    /** 房间号长度。 */
     private int roomCodeLength = 16;
 
-    /**
-     * 客户端保存的自定义服务器列表(房间号添加的服务器)
-     */
+    /** 收藏的房间号服务器。 */
     private List<SavedServerEntry> savedRoomServers = new ArrayList<>();
 
-    /** 内置首选下载代理（GitHub 加速），始终置首优先使用。 */
+    /** 内置首选下载代理。 */
     public static final String BUILTIN_PRIMARY_MIRROR = "https://github.chenc.dev/";
 
-    /**
-     * 默认 EasyTier 公共节点（兜底用）。
-     * <p>注意：官方文档里的 public.easytier.cn / public.easytier.top 已无法解析（NXDOMAIN），
-     * 这里改用社区公共节点；正常情况下会自动从节点列表实测选优，本项仅在自动选择失败时使用。
-     */
+    /** 自动选优全部失败时使用的兜底节点。 */
     public static final String DEFAULT_EASYTIER_PUBLIC_NODE = "tcp://easytier.weiai.org.cn:11010";
 
-    // ================== 外部官方客户端集成配置（EasyTier / OpenP2P） ==================
+    // ================== 外部客户端（EasyTier / OpenP2P） ==================
 
-    /** 是否自动下载官方客户端二进制到 mods/simplep2p/。false 时要求用户手动放置。 */
+    /** 是否自动下载官方客户端。 */
     private boolean autoDownloadBinaries = true;
 
-    /** 二进制安装根目录。空=自动定位（mods/simplep2p）；可指定绝对路径（dev 调试）。 */
+    /** 二进制安装根目录，空为自动定位。 */
     private String binaryInstallDir = "";
 
-    /** EasyTier 官方版本号（对应 GitHub release tag，如 2.6.4）。 */
+    /** EasyTier 版本号（easyTierAutoLatest 开启时忽略）。 */
     private String easyTierVersion = "2.6.4";
 
-    /** OpenP2P 官方版本号（对应 GitHub release tag，如 3.25.11）。 */
+    /** EasyTier 是否自动使用 GitHub 最新版本。 */
+    private boolean easyTierAutoLatest = true;
+
+    /** OpenP2P 版本号（openP2PAutoLatest 开启时忽略）。 */
     private String openP2PVersion = "3.25.11";
 
-    /** EasyTier 公共共享节点（组网用）。 */
+    /** OpenP2P 是否自动使用 GitHub 最新版本。 */
+    private boolean openP2PAutoLatest = true;
+
+    /** EasyTier 兜底公共节点。 */
     private String easyTierPublicNode = DEFAULT_EASYTIER_PUBLIC_NODE;
 
-    /** EasyTier 服务端固定虚拟 IP（客户端通过它连服务端 MC）。 */
+    /** EasyTier 服务端虚拟 IP。 */
     private String easyTierServerIp = "10.144.144.1";
 
-    /** 下载加速镜像前缀列表（顺序回退）。chenc.dev 为默认首选代理。 */
+    /** 下载加速镜像前缀（顺序回退）。 */
     private List<String> downloadMirrors = new ArrayList<>(List.of(
             "https://github.chenc.dev/",
             "https://ghfast.top/",
             "https://hk.gh-proxy.org/",
             "https://cdn.gh-proxy.org/"));
 
-    /** OpenP2P 服务端节点名前缀（房间号映射节点名的确定性来源）。 */
+    /** OpenP2P 服务端节点名前缀。 */
     private String openP2PServerNodePrefix = "sp2p-srv-";
 
-    /** OpenP2P 客户端节点名前缀（每客户端追加随机后缀）。 */
+    /** OpenP2P 客户端节点名前缀。 */
     private String openP2PClientNodePrefix = "sp2p-cli-";
 
-    /** 外部组网就绪等待上限（毫秒）。 */
+    /** 组网就绪等待上限（毫秒）。 */
     private int extConnectTimeoutMs = 20000;
 
-    /** 预留：Windows 上是否自动静默安装 OpenP2P setup.exe（默认关，风险高）。 */
+    /** 是否自动安装 OpenP2P setup.exe（保留）。 */
     private boolean windowsOpenP2PAutoInstall = false;
 
-    /**
-     * 下载官方客户端时是否忽略 SSL 证书验证。默认关闭。
-     * <p>部分网络环境下访问 GitHub 官方直链会出现证书链校验失败（PKIX path building failed），
-     * 开启后跳过校验以完成下载（存在中间人风险，仅在用户明确选择时启用）。
-     */
+    /** 下载时是否忽略 SSL 证书校验。 */
     private boolean ignoreSslVerify = false;
 
-    /**
-     * EasyTier 公共节点列表接口（Uptime Kuma 状态页 API）。
-     * <p>返回的 JSON 中 publicGroupList[].monitorList[].name 含 "tcp://host:port（描述）" 形式的节点地址。
-     */
+    /** 公共节点列表接口（Uptime Kuma 状态页）。 */
     private String nodeListUrl = "https://info.qtet.cn/uptime/api/status-page/easytier";
 
-    /** 是否自动从节点列表中挑选延迟最低的公共节点（关闭则只用 easyTierPublicNode）。 */
+    /** 是否自动实测选优（false 时用 easyTierPublicNode）。 */
     private boolean autoSelectNode = true;
+
+    /** 单个节点连通性测试超时（毫秒）。 */
+    private int nodePingTimeoutMs = 2000;
+
+    /** 节点使用方式：auto=实测自动选优，selected=只用 selectedNodes。 */
+    private String nodeSelectMode = "auto";
+
+    /** 用户勾选的节点（nodeSelectMode=selected 时生效）。 */
+    private List<String> selectedNodes = new ArrayList<>();
+
+    /** 用户手动添加的节点，置顶参与测速与连接。 */
+    private List<String> customNodes = new ArrayList<>();
+
+    /** 用户从池中排除的节点，重新拉取后也不会再出现。 */
+    private List<String> excludedNodes = new ArrayList<>();
+
+    /** 最近一次拉取到的节点池，供配置界面离线展示。 */
+    private List<String> nodePool = new ArrayList<>();
+
+    /** 地址输入模式：room=房间号，ip=普通地址（仅手动切换后生效）。 */
+    private String clientAddressMode = "room";
+
+    /** 用户是否手动切换过地址模式；false 时按输入内容自动识别。 */
+    private boolean clientAddressModeManual = false;
 
     // ================== 构造与加载 ==================
 
@@ -202,6 +188,7 @@ public class ModConfig {
         m.put("serverMode", serverMode != null ? serverMode.getId() : null);
         m.put("serverLocalPort", serverLocalPort);
         m.put("autoDetectMcPort", autoDetectMcPort);
+        m.put("autoOpenRoom", autoOpenRoom);
         m.put("openP2PToken", openP2PToken);
         m.put("openP2PRegisterUrl", openP2PRegisterUrl);
         m.put("signalingServerHost", signalingServerHost);
@@ -222,7 +209,9 @@ public class ModConfig {
         m.put("autoDownloadBinaries", autoDownloadBinaries);
         m.put("binaryInstallDir", binaryInstallDir);
         m.put("easyTierVersion", easyTierVersion);
+        m.put("easyTierAutoLatest", easyTierAutoLatest);
         m.put("openP2PVersion", openP2PVersion);
+        m.put("openP2PAutoLatest", openP2PAutoLatest);
         m.put("easyTierPublicNode", easyTierPublicNode);
         m.put("easyTierServerIp", easyTierServerIp);
         m.put("downloadMirrors", new ArrayList<>(downloadMirrors));
@@ -233,6 +222,14 @@ public class ModConfig {
         m.put("ignoreSslVerify", ignoreSslVerify);
         m.put("nodeListUrl", nodeListUrl);
         m.put("autoSelectNode", autoSelectNode);
+        m.put("nodePingTimeoutMs", nodePingTimeoutMs);
+        m.put("nodeSelectMode", nodeSelectMode);
+        m.put("selectedNodes", new ArrayList<>(selectedNodes));
+        m.put("customNodes", new ArrayList<>(customNodes));
+        m.put("excludedNodes", new ArrayList<>(excludedNodes));
+        m.put("nodePool", new ArrayList<>(nodePool));
+        m.put("clientAddressMode", clientAddressMode);
+        m.put("clientAddressModeManual", clientAddressModeManual);
         List<Map<String, Object>> list = new ArrayList<>();
         for (SavedServerEntry e : savedRoomServers) {
             Map<String, Object> em = new LinkedHashMap<>();
@@ -259,6 +256,7 @@ public class ModConfig {
         int port = SimpleJson.getInt(m, "serverLocalPort");
         this.serverLocalPort = port > 0 ? port : 25565;
         this.autoDetectMcPort = !Objects.equals(Boolean.FALSE, m.get("autoDetectMcPort"));
+        this.autoOpenRoom = Objects.equals(Boolean.TRUE, m.get("autoOpenRoom"));
         String tk = SimpleJson.getStr(m, "openP2PToken");
         this.openP2PToken = tk != null ? tk : "";
         String reg = SimpleJson.getStr(m, "openP2PRegisterUrl");
@@ -281,9 +279,11 @@ public class ModConfig {
         this.autoDownloadBinaries = !Objects.equals(Boolean.FALSE, m.get("autoDownloadBinaries"));
         this.binaryInstallDir = notNullOrElse(SimpleJson.getStr(m, "binaryInstallDir"), "");
         this.easyTierVersion = notNullOrElse(SimpleJson.getStr(m, "easyTierVersion"), "2.6.4");
+        this.easyTierAutoLatest = !Objects.equals(Boolean.FALSE, m.get("easyTierAutoLatest"));
         this.openP2PVersion = notNullOrElse(SimpleJson.getStr(m, "openP2PVersion"), "3.25.11");
+        this.openP2PAutoLatest = !Objects.equals(Boolean.FALSE, m.get("openP2PAutoLatest"));
         String etNode = notNullOrElse(SimpleJson.getStr(m, "easyTierPublicNode"), DEFAULT_EASYTIER_PUBLIC_NODE);
-        // 迁移已失效的官方公共节点地址（public.easytier.cn / public.easytier.top 现已无法解析）
+        // 迁移已失效的官方公共节点
         if (etNode.contains("public.easytier.cn") || etNode.contains("public.easytier.top")) {
             etNode = DEFAULT_EASYTIER_PUBLIC_NODE;
         }
@@ -307,6 +307,16 @@ public class ModConfig {
         this.nodeListUrl = notNullOrElse(SimpleJson.getStr(m, "nodeListUrl"),
                 "https://info.qtet.cn/uptime/api/status-page/easytier");
         this.autoSelectNode = !Objects.equals(Boolean.FALSE, m.get("autoSelectNode"));
+        this.nodePingTimeoutMs = positiveOrDefault(SimpleJson.getInt(m, "nodePingTimeoutMs"), 2000);
+        String nsm = SimpleJson.getStr(m, "nodeSelectMode");
+        this.nodeSelectMode = "selected".equalsIgnoreCase(nsm) ? "selected" : "auto";
+        this.selectedNodes = strList(m.get("selectedNodes"));
+        this.customNodes = strList(m.get("customNodes"));
+        this.excludedNodes = strList(m.get("excludedNodes"));
+        this.nodePool = strList(m.get("nodePool"));
+        String cam = SimpleJson.getStr(m, "clientAddressMode");
+        this.clientAddressMode = "ip".equalsIgnoreCase(cam) ? "ip" : "room";
+        this.clientAddressModeManual = Objects.equals(Boolean.TRUE, m.get("clientAddressModeManual"));
         // saved servers
         List<SavedServerEntry> entries = new ArrayList<>();
         Object list = m.get("savedRoomServers");
@@ -337,11 +347,19 @@ public class ModConfig {
         return v > 0 ? v : def;
     }
 
+    private static List<String> strList(Object v) {
+        List<String> r = new ArrayList<>();
+        if (v instanceof List) {
+            for (Object it : (List<?>) v) {
+                String s = String.valueOf(it).trim();
+                if (!s.isEmpty() && !r.contains(s)) r.add(s);
+            }
+        }
+        return r;
+    }
+
     /**
-     * 迁移旧版写死的占位域名（signaling.simple_p2p.local / relay.simple_p2p.local /
-     * easytier.simple_p2p.local）到 127.0.0.1。这些域名根本不存在，导致
-     * "无论 token/模式如何都提示无法连接信令服务器"。检测到旧值就返回 127.0.0.1，
-     * 否则原样返回。
+     * 迁移旧版占位域名（signaling/relay/easytier .simple_p2p.local）到 127.0.0.1。
      */
     private static String migrateLegacyHost(String host) {
         if (host == null || host.isBlank()) return "127.0.0.1";
@@ -544,6 +562,8 @@ public class ModConfig {
     public void setServerLocalPort(int port) { this.serverLocalPort = port; save(); }
     public boolean isAutoDetectMcPort() { return autoDetectMcPort; }
     public void setAutoDetectMcPort(boolean v) { this.autoDetectMcPort = v; save(); }
+    public boolean isAutoOpenRoom() { return autoOpenRoom; }
+    public void setAutoOpenRoom(boolean v) { this.autoOpenRoom = v; }
     public String getOpenP2PToken() { return openP2PToken; }
     public String getOpenP2PRegisterUrl() { return openP2PRegisterUrl; }
     public String getSignalingServerHost() { return signalingServerHost; }
@@ -579,6 +599,66 @@ public class ModConfig {
     public String getNodeListUrl() { return nodeListUrl; }
     public boolean isAutoSelectNode() { return autoSelectNode; }
     public void setAutoSelectNode(boolean v) { this.autoSelectNode = v; save(); }
+
+    public int getNodePingTimeoutMs() { return nodePingTimeoutMs; }
+    public void setNodePingTimeoutMs(int v) { this.nodePingTimeoutMs = Math.max(200, Math.min(30000, v)); }
+
+    public String getNodeSelectMode() { return nodeSelectMode; }
+    public void setNodeSelectMode(String v) { this.nodeSelectMode = "selected".equalsIgnoreCase(v) ? "selected" : "auto"; }
+    public boolean isNodeSelectManual() { return "selected".equals(nodeSelectMode); }
+
+    public List<String> getSelectedNodes() { return new ArrayList<>(selectedNodes); }
+    public void setSelectedNodes(List<String> v) { this.selectedNodes = v == null ? new ArrayList<>() : new ArrayList<>(v); }
+
+    public List<String> getCustomNodes() { return new ArrayList<>(customNodes); }
+    public void addCustomNode(String node) {
+        if (node != null && !node.isBlank() && !customNodes.contains(node)) customNodes.add(node);
+    }
+    public void removeCustomNode(String node) { customNodes.remove(node); }
+
+    public List<String> getExcludedNodes() { return new ArrayList<>(excludedNodes); }
+    public void excludeNode(String node) {
+        if (node != null && !node.isBlank() && !excludedNodes.contains(node)) excludedNodes.add(node);
+    }
+    public void clearExcludedNodes() { excludedNodes.clear(); }
+
+    public List<String> getNodePool() { return new ArrayList<>(nodePool); }
+    /** 更新节点池缓存（低频写入，直接落盘）。 */
+    public synchronized void setNodePool(List<String> v) {
+        List<String> next = v == null ? new ArrayList<>() : new ArrayList<>(v);
+        if (next.equals(nodePool)) return;
+        this.nodePool = next;
+        save();
+    }
+
+    public String getClientAddressMode() { return clientAddressMode; }
+    public void setClientAddressMode(String v) { this.clientAddressMode = "ip".equalsIgnoreCase(v) ? "ip" : "room"; }
+    public boolean isClientAddressModeManual() { return clientAddressModeManual; }
+    public void setClientAddressModeManual(boolean v) { this.clientAddressModeManual = v; }
+
+    /**
+     * 是否按房间号处理地址输入：用户手动切换过就按切换结果；
+     * 没切过时返回 true，让 AddressRecognizer 自行识别是不是房间号。
+     */
+    public static boolean roomCodeMode() {
+        ModConfig c = getInstance();
+        return !c.clientAddressModeManual || "room".equals(c.clientAddressMode);
+    }
+
+    public boolean isOpenP2PAutoLatest() { return openP2PAutoLatest; }
+    public void setOpenP2PAutoLatest(boolean v) { this.openP2PAutoLatest = v; }
+    public boolean isEasyTierAutoLatest() { return easyTierAutoLatest; }
+    public void setEasyTierAutoLatest(boolean v) { this.easyTierAutoLatest = v; }
+    public void setOpenP2PTokenRaw(String token) { this.openP2PToken = token != null ? token.trim() : ""; }
+    public void setEasyTierPublicNode(String v) { this.easyTierPublicNode = v == null ? "" : v.trim(); }
+    public void setEasyTierVersion(String v) { this.easyTierVersion = v == null ? "" : v.trim(); }
+    public void setOpenP2PVersion(String v) { this.openP2PVersion = v == null ? "" : v.trim(); }
+    public void setExtConnectTimeoutMs(int v) { this.extConnectTimeoutMs = Math.max(5000, v); }
+    public void setAutoDownloadBinaries(boolean v) { this.autoDownloadBinaries = v; }
+    public void setAutoDetectMcPortRaw(boolean v) { this.autoDetectMcPort = v; }
+    public void setServerLocalPortRaw(int v) { this.serverLocalPort = Math.max(1, Math.min(65535, v)); }
+    public void setNodeListUrl(String v) { this.nodeListUrl = v == null ? "" : v.trim(); }
+    public void setEasyTierServerIp(String v) { this.easyTierServerIp = v == null ? "" : v.trim(); }
 
     public static String signalingEndpoint() {
         ModConfig c = getInstance();

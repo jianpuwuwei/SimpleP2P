@@ -5,17 +5,12 @@ import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.network.chat.Component;
 
 /**
- * 界面右上角提示（toast）工具。
- *
- * <p>组网/连接过程是在后台线程执行的，而且此时玩家通常停留在"多人游戏/连接中"界面，
- * 聊天栏的进度提示看不见；因此把关键进度同时以 toast 形式弹到右上角。
- *
- * <p>使用 {@link SystemToast#multiline} 以支持自动换行；仅对极端超长文本做保护性截断，
- * 避免 toast 高度溢出屏幕（完整信息仍会输出到游戏日志）。
+ * 界面右上角 toast 提示工具：组网/连接在后台线程执行，聊天栏进度看不见，
+ * 因此用 toast 在右上角弹出关键进度（内部会切到 MC 主线程）。
  */
 public final class ToastHelper {
 
-    /** 正文最大长度（超过则截断，防止 toast 撑出屏幕）。 */
+    /** 正文最大长度，超过则截断以免 toast 撑出屏幕。 */
     private static final int MAX_LEN = 220;
 
     private ToastHelper() {}

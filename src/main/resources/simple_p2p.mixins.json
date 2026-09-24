@@ -9,6 +9,7 @@
   ],
   "client": [
     "ConnectScreenMixin",
+    "IntegratedServerMixin",
     "ServerPingerMixin"
   ],
   "injectors": {

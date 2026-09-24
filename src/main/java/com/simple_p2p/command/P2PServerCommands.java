@@ -4,24 +4,13 @@ import com.simple_p2p.config.ModConfig;
 import com.simple_p2p.enums.P2PMode;
 import com.simple_p2p.ext.ExternalNetManager;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * P2P服务端命令处理器（外部官方客户端版本）。
+ * /p2p 命令的纯逻辑实现，命令语法树在 SimpleP2PMod 中注册。
  *
- * 命令（由Minecraft的Command系统调用执行，这里提供纯逻辑层）：
- *
- *  /p2p open [房间号]            开启房间（异步组网：EasyTier / OpenP2P 官方客户端）
- *  /p2p setcode <新房间号>       修改当前房间号（房间已开启时自动重启）
- *  /p2p close                   关闭房间
- *  /p2p mode <easytier|openp2p|both>  切换服务端模式（默认双开）
- *  /p2p status                  查看当前房间/组网状态
- *  /p2p setport <端口>          设置MC本地服务端口（默认25565）
- *  /p2p settoken <token>        设置OpenP2P Token
- *  /p2p token                   查看当前Token状态
- *
- * <p>open/setCode/mode/close 为异步流程：命令立即返回"正在启动…"，最终结果经
- * {@link #setAsyncChat(Consumer)} 回调抛回聊天。不阻塞 MC 主线程。
+ * <p>open/setcode/mode/close 为异步：命令立即返回，最终结果经 {@link #setAsyncChat(Consumer)} 回聊。
  */
 public class P2PServerCommands {
 
@@ -32,6 +21,8 @@ public class P2PServerCommands {
     private Consumer<String> asyncChat;
     /** 端口自动检测的警告（未检测到/不可达时由命令注册方设置，开房时提示玩家）。 */
     private String portDetectWarning;
+    /** 开房进行中标志，防止重复触发。 */
+    private static final AtomicBoolean OPENING = new AtomicBoolean(false);
 
     public P2PServerCommands() {
         this.config = ModConfig.getInstance();
@@ -116,10 +107,15 @@ public class P2PServerCommands {
             return CommandResult.fail("房间已开启，当前房间号: " + ExternalNetManager.INSTANCE.getActiveRoomCode()
                     + "，如需更换请先 /p2p close");
         }
+        // 开房是异步的，用标志位挡住重复触发（自动开房的两个时机可能挨得很近）
+        if (!OPENING.compareAndSet(false, true)) {
+            return CommandResult.fail("房间正在启动中...");
+        }
         final String roomCode;
         if (parts.length >= 2) {
             String code = parts[1];
             if (!config.setRoomCode(code)) {
+                OPENING.set(false);
                 return CommandResult.fail("房间号格式错误：需至少6位且只含字母数字");
             }
             roomCode = code;
@@ -142,34 +138,20 @@ public class P2PServerCommands {
 
         ExternalNetManager.INSTANCE.startServerAsync(roomCode, mode, port,
                 result -> {
+                    OPENING.set(false);
                     if (result.ok) {
                         currentMode = result.effectiveMode;
-                        StringBuilder sb = new StringBuilder();
-                        sb.append("============================================\n");
-                        sb.append("P2P房间启动成功！\n");
-                        sb.append(" 房间号: ").append(roomCode).append("\n");
-                        sb.append(" 模式: ").append(result.effectiveMode.getDisplayName()).append("\n");
-                        sb.append(" 本地MC端口: ").append(port).append("\n");
-                        if (result.address != null) {
-                            sb.append(" 组网地址(映射IP): ").append(result.address).append("\n");
-                        }
-                        if (result.warnings.length > 0) {
-                            sb.append(" ").append("\n");
-                            for (String w : result.warnings) sb.append(w).append("\n");
-                        }
-                        sb.append(" \n");
-                        sb.append("玩家(客户端)操作方式:\n");
-                        sb.append("  1) 在多人游戏->添加服务器，服务器地址处直接输入房间号\n");
-                        sb.append("  2) 或在'直接连接'里输入房间号即可进入\n");
-                        sb.append("============================================");
-                        for (String l : sb.toString().split("\n")) chat(l);
+                        chat("房间号: " + roomCode);
+                        chat("模式: " + result.effectiveMode.getDisplayName() + " | 端口: " + port);
+                        for (String w : result.warnings) chat(w);
+                        chat("客户端在“添加服务器/直接连接”里填房间号即可加入");
                     } else {
                         chat("房间启动失败: " + (result.failReason != null ? result.failReason : "未知原因"));
                     }
                 },
                 this::chat);
 
-        return CommandResult.success("正在启动房间...请稍候，结果将在此处显示。");
+        return CommandResult.success("正在启动房间...");
     }
 
     private CommandResult cmdSetCode(String[] parts) {
@@ -325,30 +307,16 @@ public class P2PServerCommands {
         }
     }
 
-    /**
-     * /p2p sslignore <on|off>：下载官方客户端时是否忽略 SSL 证书校验。
-     * <p>用于部分网络环境下访问 GitHub 官方直链出现证书链校验失败（PKIX path building failed）的场景。
-     */
+    /** /p2p sslignore <on|off>：下载官方客户端时是否忽略 SSL 证书校验。 */
     private CommandResult cmdSslIgnore(String[] parts) {
         if (parts.length < 2) {
             return CommandResult.success(
                     "忽略 SSL 证书校验: " + (config.isIgnoreSslVerify() ? "已开启" : "已关闭"),
-                    "用法: /p2p sslignore <on|off>",
-                    "开启后，下载官方客户端时会跳过证书与主机名校验。",
-                    "适用于部分网络下 GitHub 直链报 PKIX/证书错误的场景。",
-                    "注意: 跳过校验存在中间人风险，请确认网络环境可信。"
-            );
+                    "用法: /p2p sslignore <on|off>（跳过校验存在中间人风险）");
         }
         boolean on = "on".equalsIgnoreCase(parts[1]) || "true".equalsIgnoreCase(parts[1]);
         config.setIgnoreSslVerify(on);
-        if (on) {
-            return CommandResult.success(
-                    "忽略 SSL 证书校验已开启（下载时会跳过证书校验，存在安全风险）",
-                    "请再次执行 /p2p open 触发重新下载；",
-                    "若核心已安装过，可先删除 mods/simplep2p 下对应工具目录再重新 open 以强制重下。"
-            );
-        }
-        return CommandResult.success("忽略 SSL 证书校验已关闭（恢复正常证书校验）");
+        return CommandResult.success("忽略 SSL 证书校验已" + (on ? "开启（存在安全风险）" : "关闭"));
     }
 
     private CommandResult help() {

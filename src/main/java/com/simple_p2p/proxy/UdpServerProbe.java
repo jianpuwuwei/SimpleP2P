@@ -10,20 +10,8 @@ import java.util.List;
 import java.util.concurrent.*;
 
 /**
- * UDP 服务器探测：
- * <p>
- * 客户端对“输入的非 IP 字符串 = 房间码”服务器时，发 PROBE roomCode UDP 包，
- * 服务端（运行 MC + 开启 /p2p open 的进程）通过 {@link com.simple_p2p.signaling.EmbeddedSignaling}
- * 回复 {@code PROBE_OK roomCode modeBits hasToken serverStampMs}。
- *
- * <p>关键修复：探测阶段不再先依赖远端 TCP 信令，直接使用 UDP 并行发 4 个候选地址：
- * <ol>
- *     <li>ModConfig.signalingServerHost : embeddedSignalingUdpProbePort（配置里给的）</li>
- *     <li>127.0.0.1 : embeddedSignalingUdpProbePort（本机内嵌，默认兜底）</li>
- *     <li>255.255.255.255 : embeddedSignalingUdpProbePort（LAN 广播）</li>
- *     <li>（可选）若服务端地址本身是 IP/Host，则直接发给它</li>
- * </ol>
- * 第一个回包就当作结果，避免连接不到不存在的公共信令导致“任何模式都先提示信令服务器不可达”。
+ * UDP 服务器探测：客户端对房间码发 {@code PROBE roomCode} 包，
+ * 服务端回复 {@code PROBE_OK roomCode modeBits hasToken serverStampMs}，用于获取延迟与模式。
  */
 public class UdpServerProbe implements AutoCloseable {
 
@@ -43,7 +31,7 @@ public class UdpServerProbe implements AutoCloseable {
         public final boolean supportsOpenP2P;
         public final boolean hasOpenP2PToken;
         public final String errorMessage;
-        /** 响应包实际来自的地址；用于 UI 调试展示，null 表示未收到回包。 */
+        /** 响应包实际来自的地址；null 表示未收到回包。 */
         public final String responderAddress;
 
         public ProbeResult(boolean success, int pingMs, boolean e, boolean o, boolean hasToken, String err, String responder) {
@@ -104,17 +92,12 @@ public class UdpServerProbe implements AutoCloseable {
         }
     }
 
-    /** 简化版：仅查模式（其实 UDP 探测本身已带模式信息，直接复用）。 */
+    /** 仅查模式：UDP 探测本身已带模式信息，直接复用。 */
     public ProbeResult queryModesOnly(String roomCode) {
         return probe(roomCode);
     }
 
-    /**
-     * 只探测本机 127.0.0.1 的内嵌信令，用于判断"该房间的服务端是否就是本机"。
-     * <p>内嵌信令只会对"已注册的房间号"回包，因此收到响应即可确认本机就是该房间的服务端；
-     * 未注册（或服务端在远程）时不会收到响应。跨机时对方的 UDP 探测包也无法通过 NAT 到达，
-     * 所以本方法只适用于本机判定。
-     */
+    /** 只探测本机 127.0.0.1 内嵌信令，收到响应即确认本机就是该房间的服务端（仅适用于本机判定）。 */
     public ProbeResult probeLocal(String roomCode) {
         if (roomCode == null || roomCode.trim().isEmpty()) {
             return new ProbeResult(false, -1, false, false, false, "房间号为空", null);
@@ -123,7 +106,7 @@ public class UdpServerProbe implements AutoCloseable {
                 ModConfig.embeddedSignalingUdpProbePort()));
     }
 
-    public void close() { /* 无长连接需要关闭，探测为一次性 UDP */ }
+    public void close() { }
 
     // ---------------- 内部实现 ----------------
 
@@ -180,7 +163,6 @@ public class UdpServerProbe implements AutoCloseable {
                     ProbeResult parsed = parseResp(resp, start, rp);
                     if (parsed != null) return parsed;
                 } catch (SocketTimeoutException t) {
-                    // continue retry
                 } catch (IOException ioe) {
                     return new ProbeResult(false, -1, false, false, false,
                             "UDP 错误(" + addr + "): " + ioe.getMessage(), null);

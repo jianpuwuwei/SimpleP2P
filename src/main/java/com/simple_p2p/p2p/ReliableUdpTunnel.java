@@ -12,18 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 可靠的UDP通道 - 在UDP之上实现类TCP连接（可靠、有序、带重传）
- * 用于在P2P打洞成功后，承载Minecraft的TCP数据流
- * 也用于中继模式（此时实际底层会通过TCP连接到中继服务器）
+ * 可靠的 UDP 通道 - 在 UDP 之上实现类 TCP 连接（可靠、有序、带重传），
+ * 用于承载 Minecraft 的 TCP 数据流；中继模式下底层实际走 TCP。
  *
- * 协议包结构(二进制)：
- *   [2字节类型][4字节包序号][4字节窗口/确认号][4字节长度][payload]
- *
- * 类型:
- *   1 = DATA     : 普通数据
- *   2 = ACK      : 确认
- *   3 = FIN      : 关闭
- *   4 = KEEPALIVE: 保活(NAT保活)
+ * 协议包结构(二进制)：[2字节类型][4字节包序号][4字节窗口/确认号][4字节长度][payload]
+ * 类型: 1=DATA 2=ACK 3=FIN 4=KEEPALIVE
  */
 public class ReliableUdpTunnel implements Closeable {
 
@@ -107,9 +100,7 @@ public class ReliableUdpTunnel implements Closeable {
         return isRelayMode;
     }
 
-    /**
-     * 启动隧道收发线程
-     */
+    /** 启动隧道收发线程。 */
     public void start() {
         if (isRelayMode) {
             startRelayBridge();
@@ -120,16 +111,12 @@ public class ReliableUdpTunnel implements Closeable {
         }
     }
 
-    /**
-     * 获取可用于读取MC数据的输入流（从对端读到的数据）
-     */
+    /** 读取从对端收到的数据。 */
     public InputStream getInputStream() {
         return inputStream;
     }
 
-    /**
-     * 获取可用于写入MC数据的输出流（最终会发到对端）
-     */
+    /** 写入的数据将发送到对端。 */
     public OutputStream getOutputStream() {
         return outputStream;
     }
@@ -149,7 +136,6 @@ public class ReliableUdpTunnel implements Closeable {
                     lastActivity = System.currentTimeMillis();
                 }
             } catch (Exception e) {
-                // disconnected
             } finally {
                 close();
             }
@@ -168,7 +154,6 @@ public class ReliableUdpTunnel implements Closeable {
                     lastActivity = System.currentTimeMillis();
                 }
             } catch (Exception e) {
-                // disconnected
             } finally {
                 close();
             }
@@ -260,7 +245,7 @@ public class ReliableUdpTunnel implements Closeable {
                     Thread.sleep(300);
                     long now = System.currentTimeMillis();
                     for (Map.Entry<Integer, byte[]> entry : unacked.entrySet()) {
-                        // 重传：简单每300ms重传未确认包，最多重传N次
+                        // 每 300ms 重传未确认包
                         try {
                             udpSend(entry.getValue());
                         } catch (Exception ignored) {}
@@ -293,7 +278,6 @@ public class ReliableUdpTunnel implements Closeable {
     }
 
     private void handleDataPacket(int seq, byte[] data) {
-        // 回ACK
         sendAck(seq);
         if (seq == recvExpected.get()) {
             // 顺序到达，直接写入

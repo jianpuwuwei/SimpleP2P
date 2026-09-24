@@ -9,14 +9,8 @@ import java.io.*;
 import java.net.*;
 
 /**
- * P2P连接器 - 客户端侧建立到服务端的P2P/中继隧道
- *
- * 客户端连接流程：
- *  1. EasyTier模式：免token，直接请求信令服务器协调打洞；打洞失败自动切到EasyTier的TCP中继节点
- *  2. OpenP2P模式：需要token；先带token向信令服务器验证，然后协调打洞；失败走OpenP2P官方中继
- *  3. 任何模式下，打洞流程失败都会自动切换到对应中继服务器
- *
- *  成功建立后返回ReliableUdpTunnel(提供InputStream/OutputStream)
+ * P2P 连接器 - 客户端侧建立到服务端的 P2P/中继隧道：
+ * EasyTier 模式免 token，OpenP2P 模式需 token；打洞失败自动切换到对应中继。
  */
 public class P2PConnector {
 
@@ -26,12 +20,9 @@ public class P2PConnector {
         this.config = ModConfig.getInstance();
     }
 
-    /**
-     * 连接结果
-     */
     public static class ConnectResult {
         public final boolean success;
-        public final ReliableUdpTunnel tunnel; // 成功的隧道
+        public final ReliableUdpTunnel tunnel;
         public final ConnectionType connectionType;
         public final String mode;              // "easytier" | "openp2p"
         public final String errorMessage;
@@ -53,9 +44,7 @@ public class P2PConnector {
         }
     }
 
-    /**
-     * 使用EasyTier模式连接（免token）
-     */
+    /** 使用 EasyTier 模式连接（免 token）。 */
     public ConnectResult connectEasyTier(String roomCode) {
         SignalingClient client = new SignalingClient();
         try {
@@ -107,9 +96,7 @@ public class P2PConnector {
         }
     }
 
-    /**
-     * 使用OpenP2P模式连接（需要token）
-     */
+    /** 使用 OpenP2P 模式连接（需要 token）。 */
     public ConnectResult connectOpenP2P(String roomCode, String token) {
         if (token == null || token.trim().isEmpty()) {
             return ConnectResult.fail("OpenP2P模式需要填写Token");
@@ -164,8 +151,7 @@ public class P2PConnector {
     // ================== 中继连接 ==================
 
     /**
-     * EasyTier中继连接：连接到公共中继服务器，发送 CONNECT 消息，
-     * 然后服务器会把TCP socket桥接到目标房间的服务端
+     * EasyTier中继连接：连接中继服务器并发 CONNECT，服务器把 TCP socket 桥接到目标房间服务端
      */
     private ReliableUdpTunnel connectEasyTierRelay(String roomCode) {
         try {
@@ -191,9 +177,7 @@ public class P2PConnector {
         }
     }
 
-    /**
-     * OpenP2P中继连接：带token
-     */
+    /** OpenP2P 中继连接：带 token。 */
     private ReliableUdpTunnel connectOpenP2PRelay(String roomCode, String token) {
         try {
             Socket s = new Socket();

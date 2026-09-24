@@ -17,17 +17,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 信令客户端（兼旧 API 兼容薄壳）。
- *
- * <p>关键修复：当配置的信令地址不可达时，自动根据 {@link ModConfig#autoFallbackToLocalSignaling()}
- * 回退到 {@code 127.0.0.1} 并确保 {@link EmbeddedSignaling#ensureStarted()}。这从流程上解决了
- * 之前写死的 {@code signaling.simple_p2p.local} 根本不存在，导致
- * “无论是否登录 OpenP2P token / 切换 EasyTier 模式，都先提示无法连接信令服务器”的问题。
- *
- * <p>同时保留了旧调用方依赖的方法签名（connect / registerRoom / unregisterRoom /
- * requestConnect / close / probeRoomUdp / queryRoomModes），因此 P2PServerAcceptor /
- * P2PConnector / UdpServerProbe（其旧版本调用过这些方法）不需要再做细粒度改写即可编译通过，
- * 避免本轮一次性改太多链路导致回归。
+ * 信令客户端（兼旧 API 兼容薄壳）：配置的信令地址不可达时，
+ * 按 {@link ModConfig#autoFallbackToLocalSignaling()} 自动回退到 {@code 127.0.0.1} 并确保 {@link EmbeddedSignaling#ensureStarted()}。
+ * 同时保留旧调用方依赖的方法签名（connect / registerRoom / requestConnect 等）。
  */
 public class SignalingClient {
 
@@ -60,9 +52,7 @@ public class SignalingClient {
             try {
                 EmbeddedSignaling.instance().ensureStarted();
                 int localPort = EmbeddedSignaling.instance().getTcpPort();
-                // memory-only 模式（running 但没起 TCP listener）：直接返回"空成功"响应，
-                // 不再尝试连 127.0.0.1:X 造成 Connection refused 噪声。
-                // 后续 SignalingClientLegacy 的 registerRoom / connect 会走内存兜底。
+                // memory-only 模式：直接返回空成功响应，避免无谓的 Connection refused
                 if (EmbeddedSignaling.instance().isRunning() && localPort <= 0) {
                     JsonObject r = new JsonObject();
                     r.addProperty("type", "ok");
@@ -77,7 +67,7 @@ public class SignalingClient {
                         localEp, configured, String.valueOf(configuredFailed.getMessage()));
                 return callInternal(localEp, req);
             } catch (Exception localFailed) {
-                // 最后的最后：embedded 也挂了 → 如果确实 running，给个 memory-only 空响应，不让上层抛错
+                // embedded 也失败：若确实 running 则给空响应，不向上抛错
                 if (EmbeddedSignaling.instance().isRunning()) {
                     JsonObject r = new JsonObject();
                     r.addProperty("type", "ok");
@@ -156,10 +146,7 @@ public class SignalingClient {
         return new SignalingClientLegacy(this).requestConnect(roomCode, mode, tokenIfOpenP2P);
     }
 
-    /**
-     * 旧 API：通过 UDP 探测房间延迟与模式。新版 UdpServerProbe 已重写为并行目标探测，
-     * 这里保留一个等价实现以避免任何遗留编译/反射引用。
-     */
+    /** 旧 API：通过 UDP 探测房间延迟与模式，保留以兼容遗留引用。 */
     public Object[] probeRoomUdp(String roomCode) {
         try (com.simple_p2p.proxy.UdpServerProbe p = new com.simple_p2p.proxy.UdpServerProbe()) {
             com.simple_p2p.proxy.UdpServerProbe.ProbeResult r = p.probe(roomCode);

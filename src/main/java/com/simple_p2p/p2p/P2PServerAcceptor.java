@@ -11,33 +11,21 @@ import java.net.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * P2P服务端接受器 - 服务端侧等待客户端连入
- *
- * 服务端流程：
- *  1. 调用 start(roomCode, mode, mcLocalPort) 开始
- *  2. 注册到信令服务器，告知房间号和支持的模式
- *  3. 绑定本地UDP端口(打洞监听)、监听EasyTier中继端口、监听OpenP2P中继端口
- *  4. 客户端连入后，在 onClientConnected 回调返回一个可靠隧道
- *  5. 由上层（TCPPortProxy）将这个隧道桥接到本地MC的25565端口
+ * P2P 服务端接受器 - 服务端侧注册房间并等待客户端连入；
+ * 客户端连入后通过 {@link ClientConnectedListener} 回调一条可靠隧道，由上层桥接到本地 MC 端口。
  */
 public class P2PServerAcceptor {
 
     public interface ClientConnectedListener {
-        /**
-         * 当有客户端通过P2P/中继连接进来时调用
-         *
-         * @param tunnel 已建立的可靠隧道（双向流）
-         * @param mode   easytier / openp2p
-         * @param type   P2P直连 / 中继
-         */
+        /** 当有客户端通过 P2P/中继连接进来时调用；mode 为 easytier/openp2p，type 为 P2P直连/中继。 */
         void onClientConnected(ReliableUdpTunnel tunnel, String mode, ConnectionType type);
     }
 
     private final ModConfig config;
     private SignalingClient signaling;
-    private DatagramSocket punchSocket;  // UDP打洞监听
-    private ServerSocket easyTierRelayListener; // EasyTier中继接入监听
-    private ServerSocket openP2PRelayListener;  // OpenP2P中继接入监听
+    private DatagramSocket punchSocket;
+    private ServerSocket easyTierRelayListener;
+    private ServerSocket openP2PRelayListener;
 
     private Thread punchAcceptThread;
     private Thread easyTierThread;
@@ -55,8 +43,7 @@ public class P2PServerAcceptor {
         this.listener = l;
     }
 
-    /** start() 的返回对象：除了成败，还可能带有 "双开因无 OpenP2P Token 自动降级为 EasyTier"
-     * 这类警告行，供上层命令回显给玩家看。 */
+    /** startEx() 的返回对象：除成败外可带降级警告（如双开无 Token 自动降级为 EasyTier），供上层回显。 */
     public static class StartResult {
         public final boolean ok;
         public final P2PMode effectiveMode;
@@ -86,13 +73,7 @@ public class P2PServerAcceptor {
     }
 
     /** 启动房间（新 API，返回警告/失败详情）。
-     * <p>Token 一致性校验：
-     * <ul>
-     *   <li>OPENP2P_ONLY + 无 Token → 直接失败（否则服务端对外宣称支持 OpenP2P 实际跑不起来）。</li>
-     *   <li>BOTH + 无 Token → 自动降级为仅 EasyTier，并把降级说明塞进 StartResult.warnings。</li>
-     * </ul>
-     * 注册到 EmbeddedSignaling 的 modeBits、是否启动 OpenP2P 中继监听，全部按"实际支持模式"决定。
-     */
+     * <p>Token 校验：OPENP2P_ONLY 无 Token 直接失败；BOTH 无 Token 自动降级为仅 EasyTier 并记入 warnings。 */
     public synchronized StartResult startEx(String roomCode, P2PMode mode, int mcLocalPort) {
         if (running.get()) return StartResult.success(mode);
         this.mcLocalPort = mcLocalPort;
@@ -126,7 +107,7 @@ public class P2PServerAcceptor {
             System.out.println("[SimpleP2P] 远端信令不可达，将使用内嵌信令继续启动房间");
         }
 
-        // 使用"降级后实际支持模式"注册房间，绝不再出现"无 token 但对外宣布支持 OpenP2P"的错误语义
+        // 按降级后实际支持模式注册房间
         boolean ok = signaling.registerRoom(roomCode, reqEasy, reqOpen, mcLocalPort);
         if (!ok) {
             System.err.println("[SimpleP2P] 注册房间号失败（可能房间号重复或信令服务器错误）");
@@ -147,9 +128,7 @@ public class P2PServerAcceptor {
         return StartResult.success(displayMode, warn == null ? new String[0] : new String[]{warn});
     }
 
-    /**
-     * 停止服务端，注销房间
-     */
+    /** 停止服务端并注销房间。 */
     public synchronized void stop(String roomCode) {
         if (!running.compareAndSet(true, false)) return;
         if (signaling != null) {
@@ -170,7 +149,6 @@ public class P2PServerAcceptor {
 
     private void startPunchAcceptor() {
         try {
-            // 用固定端口绑定，便于信令服务器知道公网映射
             punchSocket = new DatagramSocket(0); // 随机端口，信令服务器从数据包获取真实公网地址
             punchSocket.setSoTimeout(2000);
             final int localPort = punchSocket.getLocalPort();
@@ -215,18 +193,14 @@ public class P2PServerAcceptor {
         }
     }
 
-    /**
-     * 处理一个新通过UDP打洞连入的客户端
-     */
+    /** 处理一个新通过 UDP 打洞连入的客户端。 */
     private void handleNewClientUdp(InetAddress addr, int port) {
         try {
-            // 复制一个新的DatagramSocket继续使用原通道（复用punchSocket的绑定）
-            // 这里简化：直接使用原punchSocket建立可靠通道（基于对端addr+port过滤）
-            // 为避免并发冲突，为该客户端创建专用包装
+            // 为该客户端建立基于对端 addr:port 过滤的可靠通道
             InetSocketAddress remote = new InetSocketAddress(addr, port);
             DatagramSocket newSock = cloneUdpSocketFor(punchSocket, remote);
             if (newSock == null) {
-                // fallback：直接共用punchSocket（但会和其他客户端竞争，单房间通常1对1可接受）
+                // 兜底：共用 punchSocket（多客户端会竞争，单房间通常 1 对 1）
                 newSock = punchSocket;
             }
             ReliableUdpTunnel tunnel = new ReliableUdpTunnel(newSock, remote);
@@ -239,8 +213,7 @@ public class P2PServerAcceptor {
 
     private DatagramSocket cloneUdpSocketFor(DatagramSocket orig, InetSocketAddress remote) {
         try {
-            // Java不允许两个Socket绑定同端口，这里只能：
-            // 要么让reliable tunnel基于同一个orig socket但定向输出到remote(connect)
+            // Java 不允许两个 Socket 绑定同端口，新建 socket 并 connect(remote) 以定向收发
             DatagramSocket s = new DatagramSocket();
             s.connect(remote); // connect()后只接受/发送给这个remote
             return s;
@@ -333,7 +306,7 @@ public class P2PServerAcceptor {
                 sendErrorAndClose(client, "非法请求");
                 return;
             }
-            // 验证token（服务端配置里可以没有token，这里只做非空校验；生产环境应对接openp2p token校验服务）
+            // 仅做非空校验（生产环境应对接 openp2p token 校验服务）
             if (msg.token == null || msg.token.trim().isEmpty()) {
                 sendErrorAndClose(client, "OpenP2P需要token认证");
                 return;

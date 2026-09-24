@@ -10,15 +10,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * 拦截 ServerStatusPinger.pingServer：
- * <p>
- * 当服务器地址是房间码时，不做 DNS 解析和 TCP ping，
- * 而是做 UDP PROBE 获取延迟和模式信息，直接设置到 ServerData 上。
- * 这样服务器列表不会显示"未知主机"，而是显示 P2P 房间信息和延迟。
- *
- * <p>注：1.20.1 中类名是 ServerStatusPinger（不是旧版的 ServerPinger），
- * pingServer 签名为 {@code pingServer(ServerData, Runnable)}。
- * require = 0 让注入在目标方法签名变化时降级为不注入，避免运行期崩溃。
+ * 拦截 ServerStatusPinger.pingServer：地址为房间码时不做 DNS/TCP ping，
+ * 改做 UDP PROBE 取延迟和模式，避免服务器列表显示"未知主机"。
+ * 注：1.20.1 中类名为 ServerStatusPinger，pingServer 签名为 (ServerData, Runnable)；require=0 使其在签名变化时降级不注入。
  */
 @Mixin(ServerStatusPinger.class)
 public abstract class ServerPingerMixin {
@@ -40,7 +34,7 @@ public abstract class ServerPingerMixin {
         data.ping = result.ping;
         data.motd = Component.literal(result.motd);
 
-        // 执行回调，让上层知道 ping 已完成
+        // 回调上层告知 ping 完成
         try {
             onComplete.run();
         } catch (Throwable ignored) {}

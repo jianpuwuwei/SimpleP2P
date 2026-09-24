@@ -6,10 +6,7 @@ import java.io.File;
 
 /**
  * 外部官方客户端二进制的路径与平台判定。
- *
- * <p>安装根目录优先级：{@code -Dsimplep2p.binDir} > jar 所在目录的父目录(mods/) > 当前工作目录下 mods/。
- * 开发环境(ForgeGradle run)下类不在 jar 里，自动回退到 {@code cwd/mods/simplep2p}（即 run/mods/simplep2p），
- * 便于本地无额外配置直接测试。
+ * 安装根目录优先级：{@code -Dsimplep2p.binDir} > jar 所在目录的父目录(mods/) > 配置绝对路径 > cwd/mods。
  */
 public final class ExtPaths {
 
@@ -97,25 +94,14 @@ public final class ExtPaths {
         return new File(toolDir(t), toolBinaryName(t));
     }
 
-    /**
-     * 查找实际可用的可执行文件。
-     * <p>优先标准位置 {@code <root>/<tool>/<bin>}；找不到则在安装根目录下递归（深度≤3）查找同名文件。
-     * 这样用户把解压出的文件（或整个压缩包解压后的文件夹）手动放到 {@code mods/simplep2p/} 下任意位置都能被识别。
-     *
-     * @return 找到的文件；未找到返回 null
-     */
+    /** 查找可执行文件：优先标准位置，找不到则在安装根目录下递归（深度≤3）查找同名文件；未找到返回 null。 */
     public static File resolveBinary(ExtTool t) {
         File std = toolBin(t);
         if (std.isFile()) return std;
         return findRecursively(installRoot(), toolBinaryName(t), 0, 3);
     }
 
-    /**
-     * easytier-cli 可执行文件（与 easytier-core 同目录）。
-     * <p>用于查询节点信息与建立本地端口转发（对齐 MinecraftConnectTool 的 ET 模式做法）。
-     *
-     * @return 找到的 cli 文件；未找到返回 null
-     */
+    /** easytier-cli 可执行文件（与 easytier-core 同目录），用于查询节点信息与建立本地端口转发；未找到返回 null。 */
     public static File cliBin() {
         File core = resolveBinary(ExtTool.EASYTIER);
         if (core == null) return null;

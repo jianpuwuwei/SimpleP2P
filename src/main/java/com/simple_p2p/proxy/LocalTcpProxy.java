@@ -8,17 +8,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 本地TCP端口代理
- * 职责：
- *
- * 【客户端侧】
- *  本地启动一个TCP监听端口（例如 127.0.0.1:25566），
- *  Minecraft客户端连接此端口时，代理将连接数据流桥接到已建立的P2P隧道，
- *  等于玩家通过房间号间接连接到了远端MC服务器。
- *
- * 【服务端侧】
- *  P2PServerAcceptor 有客户端连接进来时，将隧道的数据流桥接到本地MC服务端口(25565)。
- *  这通过静态方法 bridgeTunnelToLocalMc 实现。
+ * 本地 TCP 端口代理：客户端侧监听一个本地端口，把 MC 客户端的连接桥接到 P2P 隧道；
+ * 服务端侧通过 {@link #bridgeTunnelToLocalMc} 把隧道桥接到本地 MC 服务端口。
  */
 public class LocalTcpProxy {
 
@@ -29,9 +20,7 @@ public class LocalTcpProxy {
     private int listenPort;
     private final AtomicInteger connections = new AtomicInteger(0);
 
-    /**
-     * 提供隧道的回调：每次有新的MC客户端连接时，需要一条隧道
-     */
+    /** 隧道提供者：每次有新的 MC 客户端连接时提供一条隧道。 */
     public interface ReliableUdpTunnelProvider {
         ReliableUdpTunnel provide() throws Exception;
     }
@@ -40,13 +29,7 @@ public class LocalTcpProxy {
         this.tunnelProvider = provider;
     }
 
-    /**
-     * 启动本地代理监听
-     *
-     * @param bindAddr   绑定地址（客户端侧建议127.0.0.1）
-     * @param preferPort 期望端口，0=随机
-     * @return 实际监听的端口
-     */
+    /** 启动本地代理监听；preferPort=0 表示随机端口，返回实际监听端口。 */
     public synchronized int start(String bindAddr, int preferPort) throws IOException {
         if (running.get()) return listenPort;
         serverSocket = new ServerSocket();
@@ -86,7 +69,7 @@ public class LocalTcpProxy {
                 try { mcClientSocket.close(); } catch (Exception ignored) {}
                 return;
             }
-            // 双向拷贝
+
             bidirectionalPipe(
                     "MC客户端<->P2P",
                     mcClientSocket.getInputStream(),
@@ -103,13 +86,7 @@ public class LocalTcpProxy {
         }
     }
 
-    /**
-     * 服务端侧：将连入的P2P隧道桥接到本地MC服务器端口
-     *
-     * @param tunnel       连入的P2P可靠隧道
-     * @param mcHost       MC服务端地址（通常127.0.0.1）
-     * @param mcPort       MC服务端端口（通常25565）
-     */
+    /** 服务端侧：将连入的 P2P 隧道桥接到本地 MC 服务端口。 */
     public static void bridgeTunnelToLocalMc(final ReliableUdpTunnel tunnel, String mcHost, int mcPort) {
         new Thread(() -> {
             Socket mcSocket = null;
@@ -136,9 +113,7 @@ public class LocalTcpProxy {
         }, "AIO-Bridge-ToMC").start();
     }
 
-    /**
-     * 双向流拷贝：aIn->bOut, bIn->aOut；任一端关闭时同时关闭closableA和closableB
-     */
+    /** 双向流拷贝：aIn→bOut, bIn→aOut；任一端关闭时同时关闭 closableA 和 closableB。 */
     private static void bidirectionalPipe(String label,
                                           InputStream aIn, OutputStream aOut,
                                           InputStream bIn, OutputStream bOut,

@@ -32,18 +32,21 @@ public final class ProcessSupervisor {
     private final Long elevatedPid;
     /** 隐藏启动时的输出日志文件（提权分离进程无法用管道读输出，改读该文件）。 */
     private final File logFile;
+    /** 提权看门狗的停机标记文件，创建它即可让提权脚本结束目标进程（避免再次弹 UAC）。 */
+    private final File stopFile;
 
     private ProcessSupervisor(Process p, Consumer<String> onLine, Runnable onExit) {
-        this(p, onLine, onExit, null, null);
+        this(p, onLine, onExit, null, null, null);
     }
 
     private ProcessSupervisor(Process p, Consumer<String> onLine, Runnable onExit,
-                              Long elevatedPid, File logFile) {
+                              Long elevatedPid, File logFile, File stopFile) {
         this.process = p;
         this.pumpConsumer = onLine;
         this.onExit = onExit;
         this.elevatedPid = elevatedPid;
         this.logFile = logFile;
+        this.stopFile = stopFile;
         if (p != null) {
             this.readerThread = new Thread(this::pump, "SimpleP2P-ProcOut");
             this.readerThread.setDaemon(true);
@@ -92,21 +95,21 @@ public final class ProcessSupervisor {
     }
 
     /**
-     * Windows 下以 UAC 提权启动，并附带一个"提权看门狗"脚本。
+     * Windows 下以 UAC 提权启动，并附带一个提权看门狗脚本。
      *
-     * <p>为什么需要看门狗：提权启动的进程属于管理员权限，普通权限的 taskkill 无法终止它
-     * （Access denied），导致游戏退出后核心残留。这里让提权脚本自己负责收尾——
-     * 启动 EasyTier 后写入其 PID，然后等待 Minecraft 进程退出，再强制结束 EasyTier
-     * （脚本自身是提权的，所以能杀掉 EasyTier），这样退出时无需再次弹 UAC。
+     * <p>提权进程属于管理员权限，普通 taskkill 无法终止（Access denied），且提权脚本的 stdout
+     * 无法被父进程捕获。因此让提权脚本自己负责收尾：启动目标进程并记录 PID，然后等待
+     * "Minecraft 退出"或"停机标记文件出现"，再强制结束目标进程。这样运行期无需再次弹 UAC。
      *
-     * <p>另外脚本本身已提权，因此可以正常使用输出重定向，从而拿到日志（提权进程的 stdout 无法被父进程捕获）。
-     *
-     * @param pidFile 提权脚本把 EasyTier 的 PID 写到这里，供本进程读取
-     * @param logFile 提权脚本把 EasyTier 的输出重定向到这里
+     * @param pidFile        提权脚本把目标进程 PID 写到这里
+     * @param logFile        提权脚本把目标进程输出重定向到这里
+     * @param scriptBaseName 提权脚本文件名前缀（避免多个工具互相覆盖）
      */
     public static ProcessSupervisor startWindowsElevated(File bin, List<String> args, File cwd,
-                                                         File pidFile, File logFile) throws IOException {
+                                                         File pidFile, File logFile,
+                                                         String scriptBaseName) throws IOException {
         long mcPid = ProcessHandle.current().pid();
+        File stopFile = new File(pidFile.getAbsolutePath() + ".stop");
         StringBuilder inner = new StringBuilder();
         inner.append("$et = Start-Process -FilePath '").append(bin.getAbsolutePath()).append("'");
         inner.append(" -ArgumentList '").append(String.join("','", args)).append("'");
@@ -118,15 +121,19 @@ public final class ProcessSupervisor {
         }
         inner.append(" -PassThru; ");
         inner.append("Set-Content -Path '").append(pidFile.getAbsolutePath()).append("' -Value $et.Id -Encoding ascii; ");
-        // 等待 Minecraft 退出后清理 EasyTier（脚本提权，故可终止管理员进程）
-        inner.append("Wait-Process -Id ").append(mcPid).append(" -ErrorAction SilentlyContinue; ");
+        inner.append("while ($true) { ");
+        inner.append("if (Test-Path '").append(stopFile.getAbsolutePath()).append("') { break }; ");
+        inner.append("if (-not (Get-Process -Id ").append(mcPid).append(" -ErrorAction SilentlyContinue)) { break }; ");
+        inner.append("Start-Sleep -Milliseconds 1000 }; ");
         inner.append("Stop-Process -Id $et.Id -Force -ErrorAction SilentlyContinue");
 
-        File scriptFile = new File(pidFile.getParentFile(), "easytier-launch.ps1");
+        File scriptFile = new File(pidFile.getParentFile(), scriptBaseName + ".ps1");
         java.nio.file.Files.writeString(scriptFile.toPath(), inner.toString(), StandardCharsets.UTF_8);
-        try { java.nio.file.Files.deleteIfExists(pidFile.toPath()); } catch (Exception ignored) {}
+        try {
+            java.nio.file.Files.deleteIfExists(pidFile.toPath());
+            java.nio.file.Files.deleteIfExists(stopFile.toPath());
+        } catch (Exception ignored) {}
 
-        // 外层：请求 UAC 提权执行上面的脚本（-ExecutionPolicy Bypass 允许执行 ps1）
         String outer = "Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList "
                 + "'-NoProfile','-ExecutionPolicy','Bypass','-File','" + scriptFile.getAbsolutePath() + "'";
         ProcessBuilder pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", outer);
@@ -141,9 +148,8 @@ public final class ProcessSupervisor {
             throw new IOException("等待 UAC 提权被中断", e);
         }
 
-        // 轮询读取提权脚本写回的 PID
         Long pid = null;
-        long deadline = System.currentTimeMillis() + 20000;
+        long deadline = System.currentTimeMillis() + 15000;
         while (System.currentTimeMillis() < deadline) {
             try {
                 if (pidFile.isFile()) {
@@ -154,9 +160,9 @@ public final class ProcessSupervisor {
             try { Thread.sleep(300); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
         if (pid == null) {
-            throw new IOException("UAC 提权启动失败或被取消（未取得 EasyTier 进程 PID）");
+            throw new IOException("UAC 提权被取消或启动失败");
         }
-        return new ProcessSupervisor(null, null, null, pid, logFile);
+        return new ProcessSupervisor(null, null, null, pid, logFile, stopFile);
     }
 
     /** 用 powershell 执行脚本并读取其输出的 PID（第一行纯数字）。 */
@@ -178,7 +184,7 @@ public final class ProcessSupervisor {
             if (pid == null) {
                 throw new IOException("启动失败或被用户取消（未取得进程 PID）");
             }
-            return new ProcessSupervisor(null, null, null, pid, logFile);
+            return new ProcessSupervisor(null, null, null, pid, logFile, null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("等待启动结果被中断", e);
@@ -235,16 +241,17 @@ public final class ProcessSupervisor {
         }
     }
 
-    /** 停止进程：destroy → 等3s → destroyForcibly；提权分离进程按 PID taskkill（必要时提权重试）。 */
+    /** 停止进程：普通进程 destroy → 3s → forcibly；提权分离进程写停机标记 + 尽力 taskkill。 */
     public void stop() {
         alive.set(false);
         if (elevatedPid != null) {
+            // 提权看门狗会轮询停机标记，无需再次提权（避免断开连接时又弹一次 UAC）
+            if (stopFile != null) {
+                try { java.nio.file.Files.writeString(stopFile.toPath(), "stop"); } catch (Exception ignored) {}
+            }
             taskkillPid(elevatedPid);
-            // 提权启动的进程属于管理员权限，普通 taskkill 会被拒绝（Access denied），
-            // 必须以管理员身份重试；否则进程残留会继续占用虚拟 IP 和 11010 端口，
-            // 导致后续连接走到回环/启动失败。
-            if (processAliveByPid(elevatedPid)) {
-                taskkillPidElevated(elevatedPid);
+            if (!processAliveByPid(elevatedPid) && stopFile != null) {
+                try { java.nio.file.Files.deleteIfExists(stopFile.toPath()); } catch (Exception ignored) {}
             }
             return;
         }
@@ -256,19 +263,6 @@ public final class ProcessSupervisor {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
-        }
-    }
-
-    /** 以管理员身份结束进程（会弹 UAC，仅在普通 taskkill 失败时使用）。 */
-    private static void taskkillPidElevated(long pid) {
-        try {
-            String script = "Start-Process -FilePath 'taskkill' -ArgumentList '/PID','" + pid
-                    + "','/T','/F' -Verb RunAs -WindowStyle Hidden";
-            ProcessBuilder pb = new ProcessBuilder(
-                    "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script);
-            pb.redirectErrorStream(true);
-            pb.start();
-        } catch (Exception ignored) {
         }
     }
 

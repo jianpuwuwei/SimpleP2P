@@ -79,7 +79,7 @@ public class ClientConnectionManager {
      */
     public PreCheckResult preCheck(String userInput) {
         AddressRecognizer.RecognizeResult r = AddressRecognizer.recognize(userInput);
-        if (!r.isRoomCode) {
+        if (!ModConfig.roomCodeMode() || !r.isRoomCode) {
             return new PreCheckResult(PreAction.HANDLE_PASS, null, userInput, null);
         }
         return new PreCheckResult(PreAction.CONNECT_EASYTIER_DIRECT, r.address, userInput, null);

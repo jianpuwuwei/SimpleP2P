@@ -127,8 +127,8 @@ tasks.processResources {
 }
 
 tasks.jar {
-    // Forge 1.13+ 只认 META-INF/mods.toml；mcmod.info(旧版元数据) 与 fabric.mod.json 属于
-    // build-mod.ps1 旧版/其他加载器打包流程，混入会误导 Forge 判定为"旧版本 mod"，故排除。
+    // Forge 1.13+ 只认 META-INF/mods.toml；旧版 mcmod.info 与 fabric.mod.json 混入会
+    // 被判定为“适用于旧版本的 mod”，故排除。
     exclude("mcmod.info", "fabric.mod.json")
 
     // ForgeGradle 6.x 会为 userdev 项目生成名为 "reobfJar" 的任务，但它的创建时机在

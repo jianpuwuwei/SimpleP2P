@@ -13,28 +13,18 @@ import java.util.function.Consumer;
 /**
  * EasyTier 官方客户端(easytier-core)的组网管理。
  *
- * <p>服务端固定虚拟 IP {@code easyTierServerIp}(默认 10.144.144.1)，客户端不传 -i 由 EasyTier 自动分配，
- * 客户端通过该虚拟 IP 连服务端 MC 端口。
- *
- * <p>MC 桥接：整合服只绑 127.0.0.1 时用 {@link TcpForwarder} 把 10.144.144.1:mcPort 转发到 127.0.0.1:mcPort；
- * 专用服已绑 0.0.0.0 则无需转发。
+ * <p>两端都用 --no-tun + --tcp-whitelist 暴露端口；客户端通过 easytier-cli 建立本地端口转发，
+ * MC 只连 127.0.0.1，不依赖虚拟网卡路由。
  */
 public final class EasyTierManager {
 
-    /** 生成节点机器标识（对齐 MCT：取机器/用户信息哈希的前 16 位十六进制）。 */
+    /** 生成节点机器标识（用户/系统信息摘要的前 16 位）。 */
     private static String machineId() {
-        try {
-            String raw = System.getProperty("user.name", "") + "-"
-                    + System.getProperty("os.name", "") + "-"
-                    + System.getProperty("os.arch", "");
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] h = md.digest(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", h[i]));
-            return sb.toString();
-        } catch (Exception e) {
-            return "sp2pnode";
-        }
+        String raw = System.getProperty("user.name", "") + "-"
+                + System.getProperty("os.name", "") + "-"
+                + System.getProperty("os.arch", "");
+        String hex = sha256Hex(raw);
+        return hex.length() >= 16 ? hex.substring(0, 16) : hex;
     }
 
     /** EasyTier 虚拟网内统一对外服务的约定端口（客户端固定连它，服务端负责转发到此端口）。 */
@@ -56,9 +46,23 @@ public final class EasyTierManager {
         return "sp2p-" + roomCode;
     }
 
-    /** 组网密钥（network-secret）派生，两侧同源。 */
+    /** 组网密钥（network-secret）：房间号的 SHA-256 十六进制，两侧同源。 */
     public static String networkSecret(String roomCode) {
-        return "sp2p:" + roomCode;
+        return sha256Hex(roomCode == null ? "" : roomCode);
+    }
+
+    /** SHA-256 摘要的小写十六进制表示。 */
+    private static String sha256Hex(String text) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] h = md.digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(h.length * 2);
+            for (byte b : h) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            // SHA-256 必然可用，此分支只保证不会返回空密钥
+            return "sp2p-fallback-" + text;
+        }
     }
 
     private final ModConfig config;
@@ -104,16 +108,12 @@ public final class EasyTierManager {
         File bin = ExtPaths.resolveBinary(ExtPaths.ExtTool.EASYTIER);
         if (bin == null) {
             running.set(false);
-            return StartResult.fail("未找到 easytier-core，可手动下载后放入 " + ExtPaths.toolDir(ExtPaths.ExtTool.EASYTIER).getAbsolutePath());
+            return StartResult.fail("未找到 easytier-core，请放入 " + ExtPaths.toolDir(ExtPaths.ExtTool.EASYTIER).getAbsolutePath());
         }
         File cwd = bin.getParentFile();
         List<String> args = new ArrayList<>();
-        // 参数组合对齐 MinecraftConnectTool(ET模式)：
-        //  - --no-tun：不创建虚拟网卡（两端都不再需要管理员权限/UAC），
-        //    改由 --tcp-whitelist/--udp-whitelist 把本机端口暴露到虚拟网络
-        //  - --use-smoltcp + KCP/QUIC 代理 + zstd 压缩 + --default-protocol tcp：
-        //    显著改善高延迟/丢包链路下的吞吐，避免中继(relay)模式下 MC 登录大流量被中断
-        //  - --hostname 形如 sp2p-server-<MC端口>：客户端据此识别服务端并解析出真实端口
+        // 参数组合对齐 MinecraftConnectTool：--no-tun 不建虚拟网卡（免管理员权限），
+        // 用 --tcp-whitelist/--udp-whitelist 暴露本机端口；--hostname 携带角色与 MC 端口。
         args.add("--no-tun");
         args.add("--multi-thread");
         args.add("--network-name"); args.add(networkName(roomCode));
@@ -149,23 +149,20 @@ public final class EasyTierManager {
             return StartResult.fail("启动 easytier-core 失败: " + e.getMessage());
         }
 
-        // 校验本机 MC 端口必须真实在监听，否则虚拟网络里访问不到游戏
+        // 本机 MC 端口必须真实在监听，否则虚拟网络里访问不到游戏
         if (!NetUtils.tcpReachable("127.0.0.1", mcPort, 1500)) {
             proc.stop();
             running.set(false);
-            return StartResult.fail("本机 MC 端口 " + mcPort + " 无法连接。"
-                    + "请先“对局域网开放”或启动服务器；若实际端口不同，请用 /p2p setport <实际端口> 后重新 /p2p open。");
+            return StartResult.fail("本机 MC 端口 " + mcPort + " 不可用，请先对局域网开放或用 /p2p setport 指定端口");
         }
 
-        // 等待 EasyTier 连上公共节点（组网就绪）
+        // 等待连上公共节点
         if (!waitNetworkReady(config.getExtConnectTimeoutMs())) {
             proc.stop();
             running.set(false);
-            return StartResult.fail("EasyTier 未能连上任何公共节点。进程输出: "
-                    + String.join(" | ", proc.tail(6)));
+            return StartResult.fail("未连上任何公共节点");
         }
-        // 对外地址 = 服务端虚拟IP : 本机MC端口（该端口已通过 --tcp-whitelist 暴露到虚拟网络）
-        return StartResult.success(config.getEasyTierServerIp() + ":" + mcPort);
+        return StartResult.success();
     }
 
     /** 等待 EasyTier 至少连上一个非本机节点（公共节点）。 */
@@ -233,16 +230,14 @@ public final class EasyTierManager {
         File bin = ExtPaths.resolveBinary(ExtPaths.ExtTool.EASYTIER);
         if (bin == null) {
             running.set(false);
-            return ClientTarget.fail("未找到 easytier-core，可手动下载后放入 " + ExtPaths.toolDir(ExtPaths.ExtTool.EASYTIER).getAbsolutePath());
+            return ClientTarget.fail("未找到 easytier-core，请放入 " + ExtPaths.toolDir(ExtPaths.ExtTool.EASYTIER).getAbsolutePath());
         }
         File cwd = bin.getParentFile();
         List<String> args = new ArrayList<>();
-        // 同 MCT：客户端 --no-tun（不建网卡、无需管理员权限），靠 port-forward 访问服务端；
-        // 并启用与内核相同的传输优化参数。
+        // 同 MCT：客户端 --no-tun（免管理员权限），靠 port-forward 访问服务端。
         args.add("--no-tun");
         args.add("--multi-thread");
-        // ★ 关键（对齐 MCT 房客）：--dhcp 让客户端也获得虚拟 IP 并参与隧道路由。
-        //   实测不加该参数时 easytier-cli 的 Virtual IP 为空，节点无法参与转发。
+        // --dhcp 让客户端获得虚拟 IP 并参与隧道路由，缺失时无法转发。
         args.add("--dhcp"); args.add("true");
         args.add("--network-name"); args.add(networkName(roomCode));
         args.add("--network-secret"); args.add(networkSecret(roomCode));
@@ -274,9 +269,8 @@ public final class EasyTierManager {
             return ClientTarget.fail("启动 easytier-core 失败: " + e.getMessage());
         }
 
-        // 对齐 MCT：先在虚拟网络里"找到服务端节点"，再建立本地端口转发。
-        // 只做本地 TCP 握手是不够的——那只能说明 EasyTier 接受了连接，
-        // 若服务端并不在同一网络里，转发时会直接失败（表现为 Connection reset）。
+        // 先在虚拟网络里找到服务端节点，再建立本地端口转发。
+        // 只做本地 TCP 握手不够——服务端不在同一网络时转发会立即断开（Connection reset）。
         int timeout = config.getExtConnectTimeoutMs();
         long deadline = System.currentTimeMillis() + timeout;
         ServerPeer server = null;
@@ -288,19 +282,17 @@ public final class EasyTierManager {
         if (server == null) {
             proc.stop();
             running.set(false);
-            return ClientTarget.fail("已加入虚拟网络，但未发现服务端节点（" + SERVER_HOSTNAME_PREFIX + "*）。"
-                    + "请依次确认：1) 服务端已执行 /p2p open；2) 服务端已更新到最新版 mod；3) 两端房间号完全一致。");
+            return ClientTarget.fail("未发现服务端节点，请确认服务端已 /p2p open 且两端房间号一致");
         }
-        if (log != null) log.accept("已在虚拟网络中发现服务端节点: " + server.ip + ":" + server.mcPort);
+        if (log != null) log.accept("发现服务端 " + server.ip + ":" + server.mcPort);
 
-        // 建立本地端口转发 127.0.0.1:<localPort> → <服务端虚拟IP>:<服务端MC端口>，
-        // 然后把本地地址交给 Minecraft（不直接连虚拟 IP，避免依赖虚拟网卡路由）。
-        // 目标端口取自服务端 hostname，因此服务端换端口也能自动适配。
+        // 建立本地转发 127.0.0.1:<localPort> → <服务端虚拟IP>:<MC端口>，MC 只连本机回环地址。
+        // 目标端口取自服务端 hostname，服务端换端口也能自适应。
         int localPort = NetUtils.findFreePort();
         boolean ready = false;
         while (System.currentTimeMillis() < deadline && isRunning() && localPort > 0) {
             if (addPortForward(localPort, server.ip, server.mcPort)) {
-                // 对齐 MCT：转发建立后需留时间让通道就绪，立刻验证容易误判为失败
+                // 转发建立后需留时间让通道就绪，立刻验证容易误判为失败
                 try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
                 if (verifyForwardAlive(localPort)) {
                     ready = true;
@@ -312,11 +304,10 @@ public final class EasyTierManager {
         if (!ready) {
             proc.stop();
             running.set(false);
-            return ClientTarget.fail("无法通过 EasyTier 连接到服务端 " + server.ip + ":" + server.mcPort
-                    + "（超时 " + (timeout / 1000) + "s）。请确认服务端已 /p2p open 且 Minecraft 服务已开启。");
+            return ClientTarget.fail("连接服务端超时（" + (timeout / 1000) + "s）");
         }
         if (log != null) {
-            log.accept("已建立本地转发 127.0.0.1:" + localPort + " → " + server.ip + ":" + server.mcPort);
+            log.accept("本地转发就绪 127.0.0.1:" + localPort);
         }
         return ClientTarget.ok("127.0.0.1", localPort, "easytier");
     }
@@ -438,21 +429,18 @@ public final class EasyTierManager {
     }
 
     /**
-     * 解析本次要使用的公共节点列表：默认从社区节点列表里实测挑出所有可达节点（按延迟升序），
-     * 会同时连接它们以提高组网成功率；全部不可达或获取失败时回退到配置中的固定节点。
+     * 本次要连接的公共节点：默认并行实测节点池里所有可达节点（按延迟升序），全部失败时回退固定节点。
      */
     private List<String> resolvePublicNodes(Consumer<String> log) {
-        if (!config.isAutoSelectNode()) {
+        if (!config.isAutoSelectNode() && !config.isNodeSelectManual()) {
             return java.util.Collections.singletonList(config.getEasyTierPublicNode());
         }
         try {
             List<String> nodes = PublicNodeSelector.selectAllReachable(log);
-            if (!nodes.isEmpty()) {
-                return nodes;
-            }
-            if (log != null) log.accept("未找到可用公共节点，改用默认节点: " + config.getEasyTierPublicNode());
+            if (!nodes.isEmpty()) return nodes;
+            if (log != null) log.accept("无可用节点，使用默认节点");
         } catch (Throwable t) {
-            if (log != null) log.accept("自动选择公共节点异常: " + t.getMessage());
+            if (log != null) log.accept("节点选优失败: " + t.getMessage());
         }
         return java.util.Collections.singletonList(config.getEasyTierPublicNode());
     }
@@ -505,14 +493,12 @@ public final class EasyTierManager {
 
     public static final class StartResult {
         public final boolean ok;
-        /** 组网对外地址（虚拟IP:端口），供开房信息展示。 */
-        public final String address;
         public final String error;
-        private StartResult(boolean ok, String address, String error) {
-            this.ok = ok; this.address = address; this.error = error;
+        private StartResult(boolean ok, String error) {
+            this.ok = ok; this.error = error;
         }
-        public static StartResult success(String address) { return new StartResult(true, address, null); }
-        public static StartResult fail(String error) { return new StartResult(false, null, error); }
+        public static StartResult success() { return new StartResult(true, null); }
+        public static StartResult fail(String error) { return new StartResult(false, error); }
     }
 
     public static final class ClientTarget {

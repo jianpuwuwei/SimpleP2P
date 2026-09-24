@@ -1,13 +1,14 @@
 package com.simple_p2p;
 
 import com.simple_p2p.client.ClientConnectionManager;
+import com.simple_p2p.client.ClientSetup;
 import com.simple_p2p.client.ServerListUIHelper;
 import com.simple_p2p.command.P2PServerCommands;
-import com.simple_p2p.compat.VersionAdapter;
 import com.simple_p2p.config.ModConfig;
 import com.simple_p2p.ext.ExternalNetManager;
 import com.simple_p2p.ext.NetUtils;
 import com.simple_p2p.signaling.EmbeddedSignaling;
+import com.simple_p2p.util.LanPortTracker;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -32,12 +33,14 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
+import net.minecraftforge.event.server.ServerStartedEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+import net.minecraftforge.fml.loading.FMLEnvironment;
 
 /**
  * SimpleP2P — 只针对 Forge 1.20.1 的主入口。
@@ -87,6 +90,11 @@ public class SimpleP2PMod {
 
         // 5. 外部组网进程清理：关服/JVM 退出时终止 easytier-core / openp2p 子进程
         ExternalNetManager.INSTANCE.registerShutdownHook();
+
+        // 6. 客户端：注册 mod 列表的 Config 按钮入口
+        if (FMLEnvironment.dist.isClient()) {
+            ClientSetup.registerModConfigScreen();
+        }
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
@@ -95,8 +103,10 @@ public class SimpleP2PMod {
     }
 
     private void initCommon() {
-        VersionAdapter.installServerListHooks(serverListUIHelper);
-        // 显式启动内嵌信令，保证本机/局域网 UDP 探测播报可用（外网联机走官方客户端）
+        if (FMLEnvironment.dist.isClient()) {
+            ClientSetup.init();
+        }
+        // 启动内嵌信令，用于本机/局域网 UDP 探测播报
         try { EmbeddedSignaling.instance().ensureStarted(); } catch (Throwable ignored) {}
         System.out.println("[SimpleP2P] v" + MOD_VERSION + " 初始化完成");
     }
@@ -106,6 +116,14 @@ public class SimpleP2PMod {
     public void onServerStopping(ServerStoppingEvent event) {
         ExternalNetManager.INSTANCE.stopAll();
         System.out.println("[SimpleP2P] 服务端关闭，已清理外部组网进程");
+    }
+
+    /** 专用服务器加载完成后按配置自动开房；单人世界由“对局域网开放”触发。 */
+    @SubscribeEvent
+    public void onServerStarted(ServerStartedEvent event) {
+        MinecraftServer server = event.getServer();
+        if (server == null || !server.isDedicatedServer()) return;
+        AutoRoomOpener.trigger("服务器加载完成", server.getPort());
     }
 
     // ========== 命令注册 (Forge 1.19+ 的标准事件) ==========
@@ -236,57 +254,29 @@ public class SimpleP2PMod {
     }
 
     /**
-     * 在执行命令前自动检测当前 MC 服务端的端口。
-     * 专用服务器 → server.getPort()（server.properties 里的端口）；
-     * 客户端单人/局域网 → IntegratedServer.getPort()（其 publishedPort，需已"对局域网开放"才有意义）。
-     * <p>检测后做本机 TCP 可达性校验：不可达时给出明确提示（常见于未开局域网），
-     * 避免好友连不上但玩家无从排查。检测失败则置 -1，由 P2PServerCommands 回退配置端口。
+     * 执行命令前检测当前 MC 端口。
+     * 专用服务器取 server.getPort()；单人世界取“对局域网开放”时由
+     * {@link com.simple_p2p.mixin.IntegratedServerMixin} 记录的端口（未开放前 getPort() 为 0）。
      */
     private static void autoDetectPort(CommandContext<CommandSourceStack> ctx) {
         if (registeredCommandsRef == null) return;
         int port = -1;
-        // 1) 命令源上的服务端（专用服务器；部分集成服上下文）
         try {
             MinecraftServer server = ctx.getSource().getServer();
-            if (server != null) {
-                int p = server.getPort();
-                if (p > 0) port = p;
-            }
+            if (server != null && server.getPort() > 0) port = server.getPort();
         } catch (Throwable ignored) {}
-        // 2) 客户端单人/局域网：命令源上拿不到时，反射取集成服务器端口
-        //    （物理服务端不存在客户端类，故必须反射，避免 NoClassDefFoundError）
-        if (port <= 0) {
-            port = detectIntegratedServerPort();
-        }
+        if (port <= 0) port = LanPortTracker.getLanPort();
 
         if (port > 0) {
             registeredCommandsRef.setAutoMcPort(port);
             boolean reachable = NetUtils.tcpReachable("127.0.0.1", port, 400);
             registeredCommandsRef.setPortDetectWarning(reachable ? null
-                    : "提示: 检测到 MC 端口 " + port + " 但本机无法连接。若为单人世界请先在游戏内『对局域网开放』；"
-                      + "或用 /p2p setport <实际端口> 手动指定。");
+                    : "提示: 检测到端口 " + port + " 但本机无法连接，可用 /p2p setport <实际端口> 指定");
             return;
         }
-        // 检测失败：置 -1，让 P2PServerCommands 用配置端口
         registeredCommandsRef.setAutoMcPort(-1);
         registeredCommandsRef.setPortDetectWarning(
-                "提示: 未能自动检测到 MC 监听端口，将使用配置端口。若为单人世界请先在游戏内『对局域网开放』。");
-    }
-
-    /** 反射获取客户端集成服务器(IntegratedServer)的监听端口；非客户端环境返回 -1。 */
-    private static int detectIntegratedServerPort() {
-        try {
-            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-            Object mc = mcClass.getMethod("getInstance").invoke(null);
-            if (mc == null) return -1;
-            Object singleplayer = mcClass.getMethod("getSingleplayerServer").invoke(mc);
-            if (singleplayer == null) return -1;
-            Object p = singleplayer.getClass().getMethod("getPort").invoke(singleplayer);
-            if (p instanceof Integer && (Integer) p > 0) {
-                return (Integer) p;
-            }
-        } catch (Throwable ignored) {}
-        return -1;
+                "提示: 未检测到 MC 端口，单人世界请先在游戏内“对局域网开放”，或用 /p2p setport 指定");
     }
 
     // ========== 房间号点击复制正则 ==========

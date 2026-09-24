@@ -15,19 +15,21 @@ import java.net.URI;
 import javax.net.ssl.HttpsURLConnection;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * 自动下载并安装 EasyTier / OpenP2P 官方客户端二进制到 {@code mods/simplep2p/<tool>/}。
+ * 自动下载并安装 EasyTier / OpenP2P 官方客户端到 {@code mods/simplep2p/<tool>/}。
  *
- * <ul>
- *   <li>官方直链 + 可配置加速镜像（前缀 + 官方 URL）顺序回退，首个成功即用。</li>
- *   <li>支持 zip 与 tar.gz 解压，不含第三方依赖（tar 手写最小 ustar 解析）。</li>
- *   <li>递归（深度≤2）定位目标可执行文件，复制到工具目录，写版本标记。</li>
- * </ul>
+ * <p>官方直链 + 可配置加速镜像（前缀 + 官方 URL）顺序回退；支持 zip 与 tar.gz 解压（无第三方依赖）。
  */
 public final class BinaryInstaller {
 
@@ -45,25 +47,181 @@ public final class BinaryInstaller {
 
     private static final ProgressListener NOOP = (s, b, t) -> {};
 
-    /** 官方直链（GitHub releases / 各平台）。 */
+    /**
+     * 官方下载直链：优先查询 GitHub 最新 release 并从中识别当前平台的资产文件地址；
+     * 查不到再退回按发布命名规则拼接。返回的始终是压缩包文件地址，供加速镜像拼接。
+     */
     static String officialUrl(ExtPaths.ExtTool t) {
-        ModConfig c = ModConfig.getInstance();
+        String version = versionOf(t);
+        if (autoLatest(t)) {
+            ReleaseInfo info = fetchLatestRelease(t);
+            if (info != null) {
+                setVersion(t, info.version);
+                version = info.version;
+                if (info.downloadUrl != null) return info.downloadUrl;
+            }
+        }
+        return templateUrl(t, version);
+    }
+
+    /** 按发布命名规则拼接的官方直链（兜底）。 */
+    private static String templateUrl(ExtPaths.ExtTool t, String version) {
         if (t == ExtPaths.ExtTool.EASYTIER) {
-            String v = c.getEasyTierVersion();
-            String tag = "v" + v;
-            String os = ExtPaths.osTag(); // windows-x86_64 / linux-x86_64 / macos-x86_64
-            // 注意：EasyTier 的发布文件名同样带 v 前缀，如 easytier-windows-x86_64-v2.6.4.zip
+            String tag = "v" + version;
             return "https://github.com/EasyTier/EasyTier/releases/download/"
-                    + tag + "/easytier-" + os + "-" + tag + ".zip";
+                    + tag + "/easytier-" + ExtPaths.osTag() + "-" + tag + ".zip";
+        }
+        return "https://github.com/openp2p-cn/openp2p/releases/download/"
+                + "v" + version + "/openp2p-" + version + "." + platformTag(t) + archiveExt(t);
+    }
+
+    /** 归档扩展名（Windows 为 zip，其它平台 tar.gz）。 */
+    private static String archiveExt(ExtPaths.ExtTool t) {
+        if (t == ExtPaths.ExtTool.EASYTIER) return ".zip";
+        return ExtPaths.isWindows() ? ".zip" : ".tar.gz";
+    }
+
+    /** 当前平台在发布产物名里的标识。 */
+    private static String platformTag(ExtPaths.ExtTool t) {
+        if (t == ExtPaths.ExtTool.EASYTIER) {
+            return ExtPaths.osTag(); // windows-x86_64 / macos-x86_64 / linux-x86_64
+        }
+        if (ExtPaths.isWindows()) return "windows-amd64";
+        if (ExtPaths.isMac()) return "darwin-amd64";
+        return "linux-amd64";
+    }
+
+    /** 工具对应的 GitHub 仓库。 */
+    private static String repo(ExtPaths.ExtTool t) {
+        return t == ExtPaths.ExtTool.EASYTIER ? "EasyTier/EasyTier" : "openp2p-cn/openp2p";
+    }
+
+    /** 是否自动使用 GitHub 最新版本。 */
+    private static boolean autoLatest(ExtPaths.ExtTool t) {
+        ModConfig c = ModConfig.getInstance();
+        return t == ExtPaths.ExtTool.EASYTIER ? c.isEasyTierAutoLatest() : c.isOpenP2PAutoLatest();
+    }
+
+    private static String versionOf(ExtPaths.ExtTool t) {
+        ModConfig c = ModConfig.getInstance();
+        return t == ExtPaths.ExtTool.EASYTIER ? c.getEasyTierVersion() : c.getOpenP2PVersion();
+    }
+
+    /** 把识别到的版本号写回配置。 */
+    private static void setVersion(ExtPaths.ExtTool t, String version) {
+        if (version == null || version.isEmpty() || version.equals(versionOf(t))) return;
+        if (t == ExtPaths.ExtTool.EASYTIER) {
+            ModConfig.getInstance().setEasyTierVersion(version);
         } else {
-            String v = c.getOpenP2PVersion();
-            String os; // OpenP2P release 使用 linux/darwin + amd64
-            if (ExtPaths.isMac()) os = "darwin-amd64";
-            else if (ExtPaths.isWindows()) os = null; // Windows 无独立包
-            else os = "linux-amd64";
-            if (os == null) return null;
-            return "https://github.com/openp2p-cn/openp2p/releases/download/"
-                    + "v" + v + "/openp2p-" + v + "." + os + ".tar.gz";
+            ModConfig.getInstance().setOpenP2PVersion(version);
+        }
+        ModConfig.getInstance().save();
+    }
+
+    /** release 解析结果：版本号 + 当前平台的资产直链（可能为空）。 */
+    private static final class ReleaseInfo {
+        final String version;
+        final String downloadUrl;
+        ReleaseInfo(String version, String downloadUrl) {
+            this.version = version;
+            this.downloadUrl = downloadUrl;
+        }
+    }
+
+    /**
+     * 查询最新 release 并从资产列表里挑出当前平台的包。
+     * 资产名变化导致匹配不到时仍返回版本号（上层按命名规则拼接）；
+     * GitHub API 不可用时退回读 releases/latest 的 302，只取版本号。
+     */
+    private static ReleaseInfo fetchLatestRelease(ExtPaths.ExtTool t) {
+        String body = httpGet("https://api.github.com/repos/" + repo(t) + "/releases/latest", 8000);
+        if (body != null) {
+            try {
+                com.google.gson.JsonObject o = com.google.gson.JsonParser.parseString(body).getAsJsonObject();
+                com.google.gson.JsonElement tagEl = o.get("tag_name");
+                if (tagEl != null && !tagEl.isJsonNull()) {
+                    String version = stripV(tagEl.getAsString());
+                    com.google.gson.JsonArray assets = o.getAsJsonArray("assets");
+                    if (assets != null) {
+                        for (com.google.gson.JsonElement el : assets) {
+                            com.google.gson.JsonObject a = el.getAsJsonObject();
+                            com.google.gson.JsonElement nameEl = a.get("name");
+                            com.google.gson.JsonElement urlEl = a.get("browser_download_url");
+                            if (nameEl == null || urlEl == null) continue;
+                            if (assetMatches(t, nameEl.getAsString())) {
+                                return new ReleaseInfo(version, urlEl.getAsString());
+                            }
+                        }
+                    }
+                    return new ReleaseInfo(version, null);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        String v = tagFromLocation(
+                httpLocation("https://github.com/" + repo(t) + "/releases/latest", 6000));
+        return v == null ? null : new ReleaseInfo(v, null);
+    }
+
+    /** 判断某个 release 资产是否是当前平台可用的压缩包。 */
+    private static boolean assetMatches(ExtPaths.ExtTool t, String name) {
+        if (name == null) return false;
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        String prefix = t == ExtPaths.ExtTool.EASYTIER ? "easytier-" : "openp2p-";
+        if (!n.startsWith(prefix)) return false;
+        if (!n.contains(platformTag(t).toLowerCase(java.util.Locale.ROOT))) return false;
+        return n.endsWith(archiveExt(t));
+    }
+
+    private static String stripV(String tag) {
+        String t = tag == null ? "" : tag.trim();
+        return t.startsWith("v") || t.startsWith("V") ? t.substring(1) : t;
+    }
+
+    private static String tagFromLocation(String location) {
+        if (location == null) return null;
+        int i = location.lastIndexOf("/tag/");
+        if (i < 0) return null;
+        String v = stripV(location.substring(i + 5));
+        return v.matches("[0-9][0-9.]*") ? v : null;
+    }
+
+    /** GET 返回响应体；失败返回 null。 */
+    private static String httpGet(String url, int timeoutMs) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setRequestProperty("User-Agent", "SimpleP2P-Mod");
+            conn.setRequestProperty("Accept", "application/vnd.github+json");
+            if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) return null;
+            try (InputStream in = conn.getInputStream()) {
+                return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** 不跟随重定向，返回 Location 头；失败返回 null。 */
+    private static String httpLocation(String url, int timeoutMs) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            conn.setInstanceFollowRedirects(false);
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setRequestProperty("User-Agent", "SimpleP2P-Mod");
+            conn.getResponseCode();
+            return conn.getHeaderField("Location");
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -118,11 +276,12 @@ public final class BinaryInstaller {
         }
     }
 
-    /** 在安装根目录下查找用户手动放置的官方归档包（easytier*.zip / openp2p*.tar.gz）。 */
+    /** 在安装根目录下查找用户手动放置的官方归档包（easytier*.zip / openp2p*.zip|*.tar.gz）。 */
     private static File findLocalArchive(ExtPaths.ExtTool t) {
         String prefix = t == ExtPaths.ExtTool.EASYTIER ? "easytier" : "openp2p";
-        String suffix = t == ExtPaths.ExtTool.EASYTIER ? ".zip" : ".tar.gz";
-        return findArchiveRecursively(ExtPaths.installRoot(), prefix, suffix, 0, 3);
+        File zip = findArchiveRecursively(ExtPaths.installRoot(), prefix, ".zip", 0, 3);
+        if (zip != null) return zip;
+        return findArchiveRecursively(ExtPaths.installRoot(), prefix, ".tar.gz", 0, 3);
     }
 
     private static File findArchiveRecursively(File dir, String prefix, String suffix, int depth, int maxDepth) {
@@ -148,60 +307,146 @@ public final class BinaryInstaller {
 
     private static File downloadToCache(ExtPaths.ExtTool t, ProgressListener l) throws ExtException {
         String official = officialUrl(t);
-        if (official == null && ExtPaths.isWindows()) {
-            // Windows 无独立包（OpenP2P）已在官方 URL 层处理为 null
-            if (t == ExtPaths.ExtTool.OPENP2P) {
-                throw new ExtException("Windows 版 OpenP2P 无独立命令行包，请从 openp2p.cn 下载安装 setup.exe 后重试。"
-                        + " mod 会自动识别已安装的 openp2p.exe。");
-            }
-        }
         List<String> candidates = new ArrayList<>();
-        // 优先使用镜像代理（列表中 chenc.dev 置首），官方直链作为最后兜底
+        // 镜像代理优先（chenc.dev 置首），官方直链兜底
         for (String mirror : ModConfig.getInstance().getDownloadMirrors()) {
-            if (official != null) {
-                candidates.add(mirror + official);
-            }
+            candidates.add(mirror + official);
         }
-        if (official != null) candidates.add(official);
+        candidates.add(official);
         File cacheDir = new File(ExtPaths.installRoot(), "download");
         if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) {
             throw new ExtException("无法创建下载目录: " + cacheDir.getAbsolutePath());
         }
-        String fileName = (t == ExtPaths.ExtTool.EASYTIER ? "easytier" : "openp2p")
-                + "-" + (t == ExtPaths.ExtTool.EASYTIER
-                        ? ModConfig.getInstance().getEasyTierVersion()
-                        : ModConfig.getInstance().getOpenP2PVersion())
-                + (official != null && official.endsWith(".zip") ? ".zip" : ".tar.gz");
+        int slash = official.lastIndexOf('/');
+        String fileName = slash >= 0 ? official.substring(slash + 1) : (t == ExtPaths.ExtTool.EASYTIER ? "easytier" : "openp2p") + archiveExt(t);
         File target = new File(cacheDir, fileName);
 
-        StringBuilder tried = new StringBuilder();
+        // 先并行测试所有候选地址，按实测延迟排序后再下载，避免逐个等死镜像的连接超时
+        l.onProgress("测试下载地址 ...", 0, 0);
+        List<String> ordered = rankCandidates(candidates);
+
         Exception lastError = null;
-        for (String url : candidates) {
-            if (tried.length() > 0) tried.append("; ");
-            tried.append(url);
+        for (String url : ordered) {
             try {
-                l.onProgress("下载 " + url, 0, 0);
+                l.onProgress("下载 " + describe(t) + " ...", 0, 0);
                 downloadFile(url, target, l);
                 return target;
             } catch (Exception e) {
-                // 记录最后错误并继续下一个镜像
                 lastError = e;
                 deleteQuietly(target);
             }
         }
-        // 依据失败原因给出可操作提示：SSL 证书问题可让用户选择忽略校验后重试
-        String hint = "";
-        if (isSslError(lastError)) {
-            if (!ModConfig.getInstance().isIgnoreSslVerify()) {
-                hint = "。检测到 SSL 证书验证失败，可执行 /p2p sslignore on 后重试下载"
-                        + "（将跳过证书校验，存在中间人风险，请自行确认网络可信）";
-            } else {
-                hint = "（已开启忽略 SSL 校验仍失败，请检查网络连通性）";
-            }
+        // SSL 证书校验失败时可让用户选择跳过校验后重试
+        String hint = isSslError(lastError) && !ModConfig.getInstance().isIgnoreSslVerify()
+                ? "。疑似 SSL 证书校验失败，可用 /p2p sslignore on 后重试"
+                : "";
+        throw new ExtException("下载失败" + hint + "。可手动下载官方客户端压缩包放入 "
+                + ExtPaths.toolDir(t).getAbsolutePath() + "，重启游戏后自动识别");
+    }
+
+    /**
+     * 并行探测所有候选下载地址（Range 取首字节），可用的按延迟升序排在前面；
+     * 未测通/超时的保持原顺序排在后面兜底——探测失败不代表真的下载不了。
+     */
+    private static List<String> rankCandidates(List<String> urls) {
+        List<String> ordered = new ArrayList<>();
+        if (urls.size() <= 1) {
+            ordered.addAll(urls);
+            return ordered;
         }
-        throw new ExtException("下载失败，已尝试: " + tried + hint
-                + "。可手动下载官方客户端放入 " + ExtPaths.toolDir(t).getAbsolutePath()
-                + "（或 mods/simplep2p 下任意位置），重启游戏后自动识别。");
+        ExecutorService pool = Executors.newFixedThreadPool(urls.size(), r -> {
+            Thread th = new Thread(r, "SimpleP2P-DlProbe");
+            th.setDaemon(true);
+            return th;
+        });
+        List<Probe> done = new ArrayList<>();
+        try {
+            ExecutorCompletionService<Probe> ecs = new ExecutorCompletionService<>(pool);
+            for (String url : urls) {
+                Probe p = new Probe(url);
+                ecs.submit(() -> {
+                    probe(url, p);
+                    return p;
+                });
+            }
+            long hardDeadline = System.currentTimeMillis() + 12000;
+            // 拿到第一个可用结果后再多等一会儿，收集可能更快的镜像
+            long gatherUntil = -1;
+            for (int i = 0; i < urls.size(); i++) {
+                long now = System.currentTimeMillis();
+                long wait = hardDeadline - now;
+                if (gatherUntil > 0) {
+                    if (now >= gatherUntil) break;
+                    wait = Math.min(wait, gatherUntil - now);
+                }
+                if (wait <= 0) break;
+                Future<Probe> f;
+                try {
+                    f = ecs.poll(wait, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                if (f == null) break;
+                try {
+                    done.add(f.get());
+                } catch (Exception ignored) {
+                }
+                if (gatherUntil < 0 && done.stream().anyMatch(p -> p.ok)) {
+                    gatherUntil = System.currentTimeMillis() + 1000;
+                }
+            }
+            done.stream().filter(p -> p.ok)
+                    .sorted(Comparator.comparingLong(p -> p.latencyMs))
+                    .forEach(p -> ordered.add(p.url));
+        } finally {
+            pool.shutdownNow();
+        }
+        for (String url : urls) {
+            if (!ordered.contains(url)) ordered.add(url);
+        }
+        return ordered;
+    }
+
+    /** 单个候选地址的探测结果。 */
+    private static final class Probe {
+        final String url;
+        volatile boolean ok;
+        volatile long latencyMs = Long.MAX_VALUE;
+        Probe(String url) {
+            this.url = url;
+        }
+    }
+
+    /** 探测下载地址：Range 取首字节，能读到数据即视为可用，延迟取首字节耗时。 */
+    private static void probe(String url, Probe p) {
+        HttpURLConnection conn = null;
+        long t0 = System.currentTimeMillis();
+        try {
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            conn.setInstanceFollowRedirects(true);
+            conn.setConnectTimeout(6000);
+            conn.setReadTimeout(8000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 SimpleP2P-Mod");
+            conn.setRequestProperty("Range", "bytes=0-1023");
+            if (ModConfig.getInstance().isIgnoreSslVerify() && conn instanceof HttpsURLConnection) {
+                applyInsecureSsl((HttpsURLConnection) conn);
+            }
+            int code = conn.getResponseCode();
+            if (code != HttpURLConnection.HTTP_OK && code != HttpURLConnection.HTTP_PARTIAL) return;
+            try (InputStream in = conn.getInputStream()) {
+                if (in.read() < 0) return;
+            }
+            p.latencyMs = System.currentTimeMillis() - t0;
+            p.ok = true;
+        } catch (Exception ignored) {
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private static String describe(ExtPaths.ExtTool t) {
+        return t == ExtPaths.ExtTool.EASYTIER ? "EasyTier" : "OpenP2P";
     }
 
     /** 忽略 SSL 证书与主机名校验（仅当用户显式开启 ignoreSslVerify 时调用）。 */

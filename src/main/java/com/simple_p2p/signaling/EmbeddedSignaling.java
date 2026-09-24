@@ -21,16 +21,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 内嵌（随 MC 进程启动）的轻量信令服务器，解决默认依赖不存在的 signaling.simple_p2p.local 导致
- * “无论是否登录 token / 切换 EasyTier 都提示无法连接信令服务器”的问题。
- *
- * <p>功能：
- * <ul>
- *     <li>TCP：与 {@link SignalingClient} 协议完全一致（JOIN/FETCH/PUBLISH/LEAVE），默认 127.0.0.1</li>
- *     <li>UDP：接受客户端 {@code PROBE roomCode} 探测包并回复 {@code PROBE_OK roomCode modeBits hasToken latencyMs}，
- *         用于服务端列表“延迟”显示与模式识别；如果房间号已注册则从注册表查，否则视为同机器直接返回成功</li>
- *     <li>LAN 广播 fallback：在 255.255.255.255 上收 PROBE 并回包，使同网段机器也能不用公网信令直连</li>
- * </ul>
+ * 内嵌（随 MC 进程启动）的轻量信令服务器：TCP 与 {@link SignalingClient} 协议一致，
+ * UDP 接受客户端 {@code PROBE roomCode} 并回复 {@code PROBE_OK roomCode modeBits hasToken latencyMs}，
+ * 另支持在 255.255.255.255 上收 PROBE 回包作为 LAN 广播兜底。
  */
 public class EmbeddedSignaling {
 
@@ -69,9 +62,7 @@ public class EmbeddedSignaling {
             try {
                 tcpSocket.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), desiredTcp));
             } catch (IOException desiredOccupied) {
-                // 用户配置里的 signaling/simple_p2p.local 默认端口(如 27015)经常被系统其它服务占用，
-                // 这里再退一步让 JVM 选自由端口。确保 running=true 时 tcpPort 一定有有效值，
-                // 从而 SignalingClient fallback 不会再拿到 0 然后退到已占用的 27015 二次 Connection refused。
+                // 期望端口被占用时退让给 JVM 选自由端口，避免 tcpPort=0 导致上层连错端口
                 LOGGER.info("[SimpleP2P] EmbeddedSignaling desired tcp port {} occupied, use random free port instead: {}",
                         desiredTcp, desiredOccupied.getMessage());
                 tcpSocket.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
@@ -101,10 +92,8 @@ public class EmbeddedSignaling {
         } catch (IOException e) {
             LOGGER.warn("[SimpleP2P] EmbeddedSignaling start failed, falling back to memory-only registry. msg={}",
                     e.getMessage());
-            // 任何 TCP/UDP 绑定失败都不要再留下 tcpPort=0 / udpPort=0 让 SignalingClient fallback 连错。
-            // 进入 memory-only 模式：房间注册/查询全部走 SignalingClientLegacy 的内存兜底，
-            // PROBE 和联机流程仍然能走通（同机场景用 registerRoom 内存表+UdpServerProbe并行127探测）。
-            if (this.tcpPort <= 0) this.tcpPort = 0; // 保持 0，但 running 也保持 false 让 caller 别再连 TCP。
+            // 绑定失败进入 memory-only 模式：房间注册/查询走内存兜底，避免上层连错端口
+            if (this.tcpPort <= 0) this.tcpPort = 0; // 保持 0，提示上层不要连 TCP
             if (this.udpPort <= 0) this.udpPort = 0;
             if (executor == null) {
                 executor = Executors.newCachedThreadPool(r -> {
@@ -113,7 +102,7 @@ public class EmbeddedSignaling {
                     return t;
                 });
             }
-            // memory-only 也允许 running=true，这样 registerRoom 仍能把房间存在 rooms 表里。
+            // memory-only 也置 running=true，使 registerRoom 仍能把房间存入 rooms 表
             running.set(true);
         }
     }
@@ -138,7 +127,7 @@ public class EmbeddedSignaling {
                 roomCode, mode, hasToken);
     }
 
-    /** 服务端启动房间时统一使用 P2PMode 作为参数（避免外部自己拼 mode bits）。 */
+    /** 使用 P2PMode 注册房间（避免外部自行拼 mode bits）。 */
     public void registerRoom(String roomCode, P2PMode mode, boolean hasToken) {
         registerRoom(roomCode, ModeBits.fromP2PMode(mode), hasToken);
     }
@@ -282,15 +271,13 @@ public class EmbeddedSignaling {
         String roomCode = raw.substring(PROBE_MAGIC.length()).trim().split("\\s+")[0];
         RoomRegistration room = rooms.get(roomCode);
         if (room == null) {
-            // 未注册该房间 → 不回包。
-            // 这样"客户端探测本机是否就是该房间的服务端"才准确：此前对任何房间都回包（兜底逻辑），
-            // 会导致客户端误判本机就是服务端，从而把要连的远程房间错误地指向 127.0.0.1。
+            // 未注册的房间不回包，避免客户端误判本机就是该房间的服务端
             return;
         }
         int modeBits = room.mode.bits();
         boolean hasToken = room.hasToken;
         long latency = Math.max(1, System.currentTimeMillis() - recvAt);
-        // echo back latency client side: 实际客户端用 RTT，这里填0 让客户端自己算
+        // 客户端自行计算 RTT，这里固定填 0
         String body = PROBE_RESP_PREFIX + roomCode + " " + modeBits + " " + (hasToken ? 1 : 0) + " 0";
         byte[] payload = body.getBytes(StandardCharsets.UTF_8);
         DatagramPacket reply = new DatagramPacket(payload, payload.length, packet.getAddress(), packet.getPort());
@@ -345,7 +332,7 @@ public class EmbeddedSignaling {
         }
     }
 
-    /** 位表示 (同 ModConfig.ModeBits; 保持镜像仅为减少包循环依赖) */
+    /** 位表示，镜像 ModConfig.ModeBits 以减少包循环依赖 */
     public static final class ModeBits {
         public final int bits;
         public ModeBits(int bits) { this.bits = bits; }
