@@ -35,7 +35,7 @@ import java.util.regex.Pattern;
  * EasyTier 公共节点的拉取、管理与连通性实测。
  *
  * <p>状态页、MCT、内置节点三个来源合并成同一个节点池，按 host:port 去重，不再区分主源/备用源；
- * 节点地址的端口可省略，按协议取默认端口（ws=80、wss=443、其余=11010）。
+ * 节点地址的端口可省略，按协议取默认端口（ws=80、wss=443、其余=11010），协议不限 tcp。
  * 所有节点在同一批线程里并行测试，单个节点连接超时取自配置 {@code nodePingTimeoutMs}；
  * 整体超出该时长的任务直接放弃，避免个别慢节点拖住整个组网流程。
  */
@@ -43,9 +43,9 @@ public final class PublicNodeSelector {
 
     private PublicNodeSelector() {}
 
-    /** 节点地址：协议 + 主机 + 可选端口。 */
+    /** 节点地址：协议 + 主机 + 可选端口。协议集合取自 EasyTier 支持的 peer 类型。 */
     private static final Pattern NODE_PATTERN =
-            Pattern.compile("(tcp|udp|ws|wss|quic|wg|faketcp)://([A-Za-z0-9.\\-]+)(?::(\\d{1,5}))?");
+            Pattern.compile("(tcp|udp|ws|wss|quic|wg|faketcp|srv|txt|ring)://([A-Za-z0-9.\\-]+)(?::(\\d{1,5}))?");
 
     /** 端口省略时的默认端口。 */
     private static final int DEFAULT_PORT = 11010;
@@ -67,12 +67,25 @@ public final class PublicNodeSelector {
     /** 单个节点的实测结果。 */
     public static final class NodeLatency {
         public final String node;
+        /** TCP 实测延迟（毫秒）；未实测为 -1。 */
         public final long latencyMs;
-        NodeLatency(String node, long latencyMs) {
+        /** 是否可用：TCP 连通，或非 tcp 协议但域名可解析。 */
+        public final boolean reachable;
+        /** 是否实测过延迟；false 表示 udp/quic 这类没有 TCP 监听的节点，只按域名判断可用。 */
+        public final boolean measured;
+
+        private NodeLatency(String node, long latencyMs, boolean reachable, boolean measured) {
             this.node = node;
             this.latencyMs = latencyMs;
+            this.reachable = reachable;
+            this.measured = measured;
         }
-        public boolean reachable() { return latencyMs >= 0; }
+
+        static NodeLatency up(String node, long latencyMs) { return new NodeLatency(node, latencyMs, true, true); }
+        static NodeLatency assumed(String node) { return new NodeLatency(node, -1, true, false); }
+        static NodeLatency down(String node) { return new NodeLatency(node, -1, false, false); }
+
+        public boolean reachable() { return reachable; }
     }
 
     /**
@@ -109,10 +122,13 @@ public final class PublicNodeSelector {
         } finally {
             pool.shutdownNow();
         }
-        result.sort(Comparator.comparingLong(n -> n.latencyMs < 0 ? Long.MAX_VALUE : n.latencyMs));
+        result.sort(Comparator.comparingLong(
+                n -> !n.reachable ? Long.MAX_VALUE : (n.measured ? n.latencyMs : Long.MAX_VALUE / 2)));
         if (log != null) {
             long ok = result.stream().filter(NodeLatency::reachable).count();
-            log.accept("节点测试完成：可用 " + ok + "/" + result.size());
+            long assumed = result.stream().filter(n -> n.reachable && !n.measured).count();
+            log.accept("节点测试完成：可用 " + ok + "/" + result.size()
+                    + (assumed > 0 ? "（其中 " + assumed + " 个非 tcp 节点按域名判断）" : ""));
         }
         return result;
     }
@@ -207,7 +223,10 @@ public final class PublicNodeSelector {
     /** 校验并归一化节点地址；不合法返回 null。 */
     public static String normalizeNode(String node) {
         String[] p = parseNode(node);
-        return p == null ? null : p[0] + "://" + p[1] + ":" + p[2];
+        if (p == null) return null;
+        // txt/srv 是让 EasyTier 去查 DNS 记录，地址里不带端口
+        if ("txt".equals(p[0]) || "srv".equals(p[0])) return p[0] + "://" + p[1];
+        return p[0] + "://" + p[1] + ":" + p[2];
     }
 
     /** 解析节点地址为 [proto, host, port]，端口缺省时按协议默认值补齐；不合法返回 null。 */
@@ -216,6 +235,12 @@ public final class PublicNodeSelector {
         Matcher m = NODE_PATTERN.matcher(node);
         if (!m.find()) return null;
         String proto = m.group(1).toLowerCase(Locale.ROOT);
+        String host = m.group(2);
+        // 主机名必须以字母数字开头结尾，避免把 wss://et.南梁.com 截成 wss://et.
+        if (host.isEmpty() || host.startsWith(".") || host.endsWith(".")
+                || host.startsWith("-") || host.endsWith("-")) {
+            return null;
+        }
         int port;
         try {
             port = m.group(3) != null ? Integer.parseInt(m.group(3)) : defaultPort(proto);
@@ -223,7 +248,7 @@ public final class PublicNodeSelector {
             return null;
         }
         if (port <= 0 || port > 65535) return null;
-        return new String[]{proto, m.group(2), String.valueOf(port)};
+        return new String[]{proto, host, String.valueOf(port)};
     }
 
     private static int defaultPort(String proto) {
@@ -232,7 +257,7 @@ public final class PublicNodeSelector {
         return DEFAULT_PORT;
     }
 
-    /** Uptime Kuma 状态页 API，只取 tcp 节点。 */
+    /** Uptime Kuma 状态页 API。 */
     private static List<String> fetchFromStatusPage(Consumer<String> log) {
         List<String> nodes = new ArrayList<>();
         HttpURLConnection conn = null;
@@ -280,7 +305,7 @@ public final class PublicNodeSelector {
                      BufferedReader br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = br.readLine()) != null) {
-                        String node = extractNode(line, false);
+                        String node = extractNode(line);
                         if (node != null) result.add(node);
                     }
                 }
@@ -292,19 +317,21 @@ public final class PublicNodeSelector {
         return result;
     }
 
-    /** 从一行文本里提取第一个未被打码的节点地址并归一化；tcpOnly 时只接受 tcp。 */
-    private static String extractNode(String line, boolean tcpOnly) {
+    /**
+     * 从一行文本里提取第一个可用节点地址并归一化。
+     * <p>带 {@code *} 的是状态页主动打码的节点（完整地址只在 ET 官方群里公开），无法使用，直接跳过。
+     */
+    private static String extractNode(String line) {
         if (line == null || line.contains("*")) return null;
         Matcher m = NODE_PATTERN.matcher(line);
         while (m.find()) {
-            if (tcpOnly && !"tcp".equalsIgnoreCase(m.group(1))) continue;
             String normalized = normalizeNode(m.group(0));
             if (normalized != null) return normalized;
         }
         return null;
     }
 
-    /** 解析状态页 JSON，提取 tcp 节点。 */
+    /** 解析状态页 JSON，从各监控项名称里提取节点。 */
     private static List<String> parse(String json) {
         List<String> result = new ArrayList<>();
         try {
@@ -319,7 +346,7 @@ public final class PublicNodeSelector {
                     JsonObject mon = m.getAsJsonObject();
                     JsonElement nameEl = mon.get("name");
                     if (nameEl == null || nameEl.isJsonNull()) continue;
-                    String node = extractNode(nameEl.getAsString(), true);
+                    String node = extractNode(nameEl.getAsString());
                     if (node != null) result.add(node);
                 }
             }
@@ -328,16 +355,31 @@ public final class PublicNodeSelector {
         return result;
     }
 
-    /** 实测 TCP 连接延迟（毫秒），不可达返回 -1。 */
+    /**
+     * 测试节点可用性。
+     * <p>先做 TCP 连接实测（tcp/ws/wss 节点适用）；tcp 协议失败即判不可用，
+     * 其余协议（udp/quic/wg/faketcp/srv/txt/ring）没有 TCP 监听，改用域名解析结果判断可用。
+     */
     private static NodeLatency ping(String node, int timeoutMs) {
         String[] p = parseNode(node);
-        if (p == null) return new NodeLatency(node, -1);
+        if (p == null) return NodeLatency.down(node);
+        int port = Integer.parseInt(p[2]);
         long t0 = System.currentTimeMillis();
         try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(p[1], Integer.parseInt(p[2])), timeoutMs);
-            return new NodeLatency(node, System.currentTimeMillis() - t0);
+            s.connect(new InetSocketAddress(p[1], port), timeoutMs);
+            return NodeLatency.up(node, System.currentTimeMillis() - t0);
+        } catch (Exception ignored) {
+        }
+        if ("tcp".equals(p[0]) || "ws".equals(p[0]) || "wss".equals(p[0])) return NodeLatency.down(node);
+        return resolves(p[1]) ? NodeLatency.assumed(node) : NodeLatency.down(node);
+    }
+
+    /** 域名是否能解析出地址（不校验端口）。 */
+    private static boolean resolves(String host) {
+        try {
+            return java.net.InetAddress.getByName(host) != null;
         } catch (Exception e) {
-            return new NodeLatency(node, -1);
+            return false;
         }
     }
 

@@ -32,7 +32,7 @@ public class NodePoolScreen extends Screen {
     private final ModConfig cfg = ModConfig.getInstance();
     private final List<String> nodes = new ArrayList<>();
     private final Set<String> checked = new LinkedHashSet<>();
-    private final Map<String, Long> latency = new HashMap<>();
+    private final Map<String, PublicNodeSelector.NodeLatency> probes = new HashMap<>();
     private final List<AbstractWidget> rowWidgets = new ArrayList<>();
     private EditBox input;
     private int scroll;
@@ -108,13 +108,16 @@ public class NodePoolScreen extends Screen {
             minecraft.execute(() -> {
                 nodes.clear();
                 nodes.addAll(fetched);
-                latency.clear();
+                probes.clear();
                 for (PublicNodeSelector.NodeLatency nl : probed) {
-                    latency.put(nl.node, nl.latencyMs);
+                    probes.put(nl.node, nl);
                 }
                 long ok = probed.stream().filter(PublicNodeSelector.NodeLatency::reachable).count();
+                long assumed = probed.stream()
+                        .filter(n -> n.reachable && !n.measured).count();
                 status = nodes.isEmpty() ? "没有可用节点，可手动添加或点“刷新”"
-                        : "共 " + nodes.size() + " 个节点，可用 " + ok;
+                        : "共 " + nodes.size() + " 个节点，可用 " + ok
+                          + (assumed > 0 ? "（含 " + assumed + " 个非 tcp 节点）" : "");
                 loading = false;
                 rebuildRows();
             });
@@ -214,8 +217,17 @@ public class NodePoolScreen extends Screen {
             int y = LIST_TOP + i * ROW_H - scroll;
             if (y < LIST_TOP || y + ROW_H > height - LIST_BOTTOM_GAP) continue;
             String node = nodes.get(i);
-            Long ms = latency.get(node);
-            String lat = ms == null ? "" : (ms < 0 ? "\u00a7c不可达" : "\u00a7a" + ms + "ms");
+            PublicNodeSelector.NodeLatency nl = probes.get(node);
+            String lat;
+            if (nl == null) {
+                lat = "";
+            } else if (!nl.reachable) {
+                lat = "\u00a7c不可达";
+            } else if (nl.measured) {
+                lat = "\u00a7a" + nl.latencyMs + "ms";
+            } else {
+                lat = "\u00a7a可用(非tcp)";
+            }
             g.drawString(font, node, left + 22, y + 5, 0xFFFFFF, false);
             g.drawString(font, lat, left + LIST_W - 110, y + 5, 0xAAAAAA, false);
         }
