@@ -29,7 +29,7 @@ is not required.
 
 ## Installation
 
-Put `SimpleP2P-1.0.0.jar` into the `mods/` folder. Install it on both sides only if you intend
+Put `SimpleP2P-<version>.jar` into the `mods/` folder. Install it on both sides only if you intend
 to use the room-code feature.
 
 ## Usage
@@ -89,7 +89,7 @@ runtime log (`easytier.log`).
 ./gradlew build
 ```
 
-Output: `build/libs/SimpleP2P-1.0.0.jar`
+Output: `build/libs/SimpleP2P-<version>.jar`
 
 ## Known limitations
 
