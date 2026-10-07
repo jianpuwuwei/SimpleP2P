@@ -50,9 +50,17 @@ public class P2PServerCommands {
         return (config.isAutoDetectMcPort() && autoMcPort > 0) ? autoMcPort : config.getServerLocalPort();
     }
 
+    /**
+     * 输出一行进度/结果。注入了回聊通道就只走通道（通道自己决定发聊天栏还是打控制台），
+     * 没有通道时才直接打印，避免同一行走两个通道各输出一遍。
+     */
     private void chat(String line) {
         if (asyncChat != null) {
-            try { asyncChat.accept(line); } catch (Exception ignored) {}
+            try {
+                asyncChat.accept(line);
+                return;
+            } catch (Exception ignored) {
+            }
         }
         System.out.println("[SimpleP2P] " + line);
     }

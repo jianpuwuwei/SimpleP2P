@@ -33,8 +33,9 @@ public final class ClientSetup {
         AutoRoomOpener.setNotifier(ClientSetup::notifyClient);
     }
 
-    /** 自动开房的进度提示：有玩家就发聊天栏，否则用右上角提示。 */
+    /** 自动开房的进度提示：有玩家就发聊天栏，否则用右上角提示；同时记一行日志。 */
     private static void notifyClient(String line) {
+        System.out.println("[SimpleP2P] " + line);
         Minecraft mc = Minecraft.getInstance();
         if (mc == null) return;
         mc.execute(() -> {

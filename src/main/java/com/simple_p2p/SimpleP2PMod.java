@@ -307,6 +307,8 @@ public class SimpleP2PMod {
         try {
             Component c = buildChatComponent(msg, true);
             ctx.getSource().sendSuccess(() -> c, false);
+            // 控制台来源的 sendSuccess 本身就会写日志；玩家来源不会，这里补一行，保证日志能看到进度
+            if (ctx.getSource().getEntity() != null) System.out.println("[SimpleP2P] " + msg);
         } catch (Throwable t) {
             System.out.println("[SimpleP2P] " + msg);
         }
