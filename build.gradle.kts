@@ -11,6 +11,18 @@ plugins {
     base
 }
 
+// 各模块都把 shared/core 的资源目录并入 main：内置的 aria2c 等原生二进制放在这里随 JAR 打包。
+// shared/* 只是共用源码目录（不是子工程），所以由根工程统一注入。
+subprojects {
+    plugins.withId("java") {
+        extensions.configure<SourceSetContainer>("sourceSets") {
+            named("main") {
+                resources.srcDir(rootProject.file("shared/core/src/main/resources"))
+            }
+        }
+    }
+}
+
 tasks.register("buildAll") {
     group = "build"
     description = "构建全部加载器 / 版本模块"
