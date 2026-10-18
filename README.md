@@ -132,3 +132,13 @@ Output: `<module>/build/libs/SimpleP2P-<loader>-<mc-version>-<version>.jar`
   success rate
 - When both sides have strict NAT types the traffic goes through a relay, which increases latency
 - If no public node is reachable, the mod falls back to the default node in the config
+
+## License
+
+This project is licensed under the **GNU General Public License v3.0** — see the
+[LICENSE](LICENSE) file for the full text.
+
+The bundled downloader binary `simplep2p/native/win/aria2c.exe` is part of
+[aria2](https://github.com/aria2/aria2), licensed under the GNU General Public License v2 or
+later; its license text ships alongside it at
+`shared/core/src/main/resources/simplep2p/native/win/COPYING`.
