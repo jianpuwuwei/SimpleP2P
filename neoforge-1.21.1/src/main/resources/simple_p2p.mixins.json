@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.simple_p2p.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ServerLoginTimeoutMixin"
+  ],
+  "client": [
+    "ConnectScreenMixin",
+    "ServerPingerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

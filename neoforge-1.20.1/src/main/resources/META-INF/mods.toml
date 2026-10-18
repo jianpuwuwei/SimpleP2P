@@ -1,0 +1,33 @@
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="MIT"
+issueTrackerURL="https://github.com/simple_p2p/issues"
+
+[[mods]]
+  modId="${mod_id}"
+  version="${version}"
+  displayName="${mod_name}"
+  authors="${mod_authors}"
+  description='''
+${mod_description}
+  '''
+  displayURL="https://github.com/simple_p2p"
+  logoFile="simple_p2p_icon.png"
+  credits="UDP打洞+自动中继, EasyTier/OpenP2P双模式"
+
+[[mixins]]
+config="simple_p2p.mixins.json"
+
+[[dependencies.${mod_id}]]
+  modId="minecraft"
+  mandatory=true
+  versionRange="${minecraft_version_range}"
+  ordering="NONE"
+  side="BOTH"
+
+[[dependencies.${mod_id}]]
+  modId="forge"
+  mandatory=true
+  versionRange="${loader_version_range}"
+  ordering="NONE"
+  side="BOTH"

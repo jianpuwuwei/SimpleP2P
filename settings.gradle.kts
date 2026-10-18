@@ -4,6 +4,10 @@ pluginManagement {
         maven("https://maven.aliyun.com/repository/public")
         gradlePluginPortal()
         maven("https://maven.minecraftforge.net/")
+        // NeoForge 官方源 maven.neoforged.net 在本机不可达，改用镜像
+        maven("https://mirror.sjtu.edu.cn/bmclapi/")
+        // Fabric 的镜像内容陈旧（缺 pom），必须直连官方源
+        maven("https://maven.fabricmc.net/")
     }
 }
 
@@ -11,4 +15,9 @@ pluginManagement {
 // Minecraft 原版 jar 的“捆绑仓库”，限制项目级仓库会让它找不到 net.minecraft:client。
 rootProject.name = "SimpleP2P"
 
-
+// 5 个加载器 / 版本模块；shared 目录只是共用的源码目录（通过各模块的 srcDirs 引入），不是独立工程
+include("forge-1.20.1")
+include("neoforge-1.20.1")
+include("neoforge-1.21.1")
+include("fabric-1.20.1")
+include("fabric-1.21.1")
