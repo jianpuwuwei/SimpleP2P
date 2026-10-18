@@ -192,16 +192,47 @@ public final class PublicNodeSelector {
         List<String> cached = cachedFetched;
         if (cached != null && now - cacheAt < CACHE_MS) return cached;
 
+        // 状态页与 MCT 两个来源并行拉取，避免串行等待两次网络超时（原先最坏可达 ~39s）
+        ExecutorService pool = Executors.newFixedThreadPool(2, r -> {
+            Thread t = new Thread(r, "SimpleP2P-NodeFetch");
+            t.setDaemon(true);
+            return t;
+        });
+        List<String> statusNodes;
+        List<String> mctNodes;
+        try {
+            long deadline = now + 16000;
+            statusNodes = awaitNodes(pool.submit(() -> fetchFromStatusPage(log)), deadline);
+            mctNodes = awaitNodes(pool.submit(PublicNodeSelector::fetchFromMct), deadline);
+        } finally {
+            pool.shutdownNow();
+        }
+
         List<String> nodes = new ArrayList<>();
         Set<String> keys = new HashSet<>();
-        mergeInto(nodes, keys, fetchFromStatusPage(log));
-        mergeInto(nodes, keys, fetchFromMct());
+        mergeInto(nodes, keys, statusNodes);
+        mergeInto(nodes, keys, mctNodes);
         mergeInto(nodes, keys, Arrays.asList(EXTRA_NODES));
         if (!nodes.isEmpty()) {
             cachedFetched = nodes;
             cacheAt = now;
         }
         return nodes;
+    }
+
+    /** 限时等待一个拉取任务；超时或异常返回空列表（不抛异常，避免拖住组网）。 */
+    private static List<String> awaitNodes(Future<List<String>> f, long deadline) {
+        long left = deadline - System.currentTimeMillis();
+        if (left <= 0) {
+            f.cancel(true);
+            return new ArrayList<>();
+        }
+        try {
+            return f.get(left, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            f.cancel(true);
+            return new ArrayList<>();
+        }
     }
 
     /** 合并去重：同一 host:port 只保留第一个出现的节点，并统一成 proto://host:port 形式。 */
