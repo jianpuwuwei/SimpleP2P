@@ -1,7 +1,0 @@
-{
-  "pack": {
-    "description": "${mod_name} resources",
-    "pack_format": 34,
-    "_comment": "pack_format=34 对应 Minecraft 1.21.x"
-  }
-}

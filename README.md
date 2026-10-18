@@ -7,15 +7,11 @@ network.
 
 ## Supported loaders and versions
 
-This repository is a single multi-project Gradle build covering 5 loader / version modules:
+This branch targets **Minecraft 1.20.1 with Forge** only (single-module build):
 
 | Module | MC version | Loader | Java | Output jar |
 | --- | --- | --- | --- | --- |
 | `forge-1.20.1` | 1.20.1 | Forge 47+ | 17 | `SimpleP2P-forge-1.20.1-<version>.jar` |
-| `neoforge-1.20.1` | 1.20.1 | NeoForge 47.x | 17 | `SimpleP2P-neoforge-1.20.1-<version>.jar` |
-| `fabric-1.20.1` | 1.20.1 | Fabric | 17 | `SimpleP2P-fabric-1.20.1-<version>.jar` |
-| `neoforge-1.21.1` | 1.21.1 | NeoForge 21.1.x | 21 | `SimpleP2P-neoforge-1.21.1-<version>.jar` |
-| `fabric-1.21.1` | 1.21.1 | Fabric | 21 | `SimpleP2P-fabric-1.21.1-<version>.jar` |
 
 ## When is it needed
 
@@ -37,8 +33,7 @@ is not required.
 
 ## Requirements
 
-- Minecraft 1.20.1 (Forge 47+ / NeoForge 47.x / Fabric) or Minecraft 1.21.1
-  (NeoForge 21.1.x / Fabric)
+- Minecraft 1.20.1 with Forge 47+
 - Windows / Linux / macOS (no administrator privileges required on Windows)
 - Network access to EasyTier community public nodes
 
@@ -104,10 +99,8 @@ runtime log (`easytier.log`).
 ```
 shared/core        pure Java: signaling / P2P tunnel / external client management / config / commands
 shared/client      client UI and connection logic (vanilla classes only)
-shared/forge1.20.1 Forge & NeoForge 1.20.1 loader entry (package root net.minecraftforge.*)
-shared/fabric      Fabric loader entry shared by both Fabric versions
+shared/forge1.20.1 Forge 1.20.1 loader entry (package root net.minecraftforge.*)
 shared/mc1.20.1    MC 1.20.1 specific code (mixins + ToastHelper)
-shared/mc1.21.1    MC 1.21.1 specific code (mixins + ToastHelper)
 ```
 
 The `shared/*` directories are plain source directories pulled in via `srcDirs`; they are not
@@ -117,7 +110,7 @@ Gradle projects. Cross-loader / cross-version API differences are documented in
 ## Building
 
 ```bash
-./gradlew buildAll        # Linux / macOS: build all 5 modules
+./gradlew buildAll        # Linux / macOS: build the Forge 1.20.1 module
 .\gradlew.bat buildAll    # Windows
 ```
 
@@ -127,11 +120,9 @@ Build a single module instead:
 ./gradlew :forge-1.20.1:build
 ```
 
-Output: `<module>/build/libs/SimpleP2P-<loader>-<mc-version>-<version>.jar`
+Output: `forge-1.20.1/build/libs/SimpleP2P-forge-1.20.1-<version>.jar`
 
-> Building MC 1.21.1 modules requires JDK 21; the Gradle daemon JVM is pinned to 21 in
-> `gradle/gradle-daemon-jvm.properties`, and each module still compiles with its own toolchain
-> (17 for 1.20.1, 21 for 1.21.1).
+> This module compiles with Java 17 (its own toolchain), regardless of the JVM running Gradle.
 
 ## Known limitations
 
