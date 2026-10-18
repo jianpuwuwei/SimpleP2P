@@ -1,15 +1,16 @@
 package com.simple_p2p.ext;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.simple_p2p.config.ModConfig;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -17,21 +18,17 @@ import java.util.Locale;
 /**
  * 基于 aria2c 的多线程 / 多源下载器。
  *
- * <p>优先使用系统已安装的 aria2c；Windows 上找不到时自动从 GitHub release 拉取官方
- * win-64bit 构建并解压到 {@code <安装根>/aria2/}。aria2 不可用或下载失败时由调用方
- * 回退到 {@link BinaryInstaller} 的单线程下载，保证功能不受影响。
+ * <p>aria2c 二进制已内置在 mod 的 jar 资源里（{@code simplep2p/native/win/aria2c.exe}），
+ * 首次使用时直接释放到 {@code <安装根>/aria2/}，无需联网下载。非 Windows 平台没有官方
+ * 二进制，因此回退到系统 PATH 中的 aria2c；仍不可用时由调用方回退到
+ * {@link BinaryInstaller} 的单线程下载。
  */
 public final class Aria2Downloader {
 
     private Aria2Downloader() {}
 
-    /** aria2 官方仓库。 */
-    private static final String REPO = "aria2/aria2";
-
-    /** GitHub API 不可用时的固定兜底地址（官方 Windows 构建）。 */
-    private static final String FALLBACK_WIN_ZIP =
-            "https://github.com/aria2/aria2/releases/download/release-1.37.0/"
-                    + "aria2-1.37.0-win-64bit-build1.zip";
+    /** 内置的 Windows 64 位二进制在 jar 中的路径。 */
+    private static final String EMBEDDED_WIN_RESOURCE = "/simplep2p/native/win/aria2c.exe";
 
     /** 已解析到的可执行文件；未解析时为 null。 */
     private static volatile File cachedBin;
@@ -47,12 +44,17 @@ public final class Aria2Downloader {
         return new File(ExtPaths.installRoot(), "aria2");
     }
 
-    /** 定位可用的 aria2c：受管目录 → 系统 PATH；都没有返回 null。 */
+    /** 定位可用的 aria2c：受管目录 → 释放内置资源 → 系统 PATH；都没有返回 null。 */
     public static File binary() {
         if (resolved) return cachedBin;
-        File std = new File(toolDir(), binName());
-        if (std.isFile()) {
-            cachedBin = std;
+        File managed = new File(toolDir(), binName());
+        if (managed.isFile() && managed.length() > 0) {
+            cachedBin = managed;
+            resolved = true;
+            return cachedBin;
+        }
+        if (extractEmbedded(managed)) {
+            cachedBin = managed;
             resolved = true;
             return cachedBin;
         }
@@ -61,7 +63,37 @@ public final class Aria2Downloader {
         return cachedBin;
     }
 
-    /** 在系统 PATH 里查找 aria2c。 */
+    /** 判断当前平台是否有内置二进制可释放（目前仅 Windows 64 位）。 */
+    private static String embeddedResource() {
+        if (!ExtPaths.isWindows()) return null;
+        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
+        if (!arch.contains("amd64") && !arch.contains("x86_64")) return null;
+        return EMBEDDED_WIN_RESOURCE;
+    }
+
+    /** 把内置的 aria2c 从 jar 资源释放到受管目录；没有内置资源或失败返回 false。 */
+    private static boolean extractEmbedded(File dest) {
+        String res = embeddedResource();
+        if (res == null) return false;
+        try (InputStream in = Aria2Downloader.class.getResourceAsStream(res)) {
+            if (in == null) return false;
+            File dir = dest.getParentFile();
+            if (dir != null && !dir.isDirectory() && !dir.mkdirs()) return false;
+            File tmp = new File(dir, dest.getName() + ".tmp");
+            try (OutputStream out = new FileOutputStream(tmp)) {
+                byte[] buf = new byte[65536];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            Files.move(tmp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            if (!ExtPaths.isWindows()) dest.setExecutable(true, false);
+            return dest.isFile() && dest.length() > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 在系统 PATH 里查找 aria2c（非 Windows 平台的主要来源）。 */
     private static File findOnPath() {
         String path = System.getenv("PATH");
         if (path == null || path.isEmpty()) return null;
@@ -75,29 +107,7 @@ public final class Aria2Downloader {
     }
 
     /**
-     * 确保 aria2c 可用：系统已有则直接用；Windows 下缺失时自动下载官方构建。
-     * <p>任何失败都只是放弃 aria2（调用方回退单线程下载），不抛异常。
-     */
-    public static void ensureBinary(BinaryInstaller.ProgressListener l) {
-        if (binary() != null) return;
-        if (!ExtPaths.isWindows()) return; // 官方只提供 Windows 构建，其它平台依赖系统安装
-        try {
-            String url = latestWindowsAssetUrl();
-            if (url == null) url = FALLBACK_WIN_ZIP;
-            if (l != null) l.onProgress("准备下载 aria2 ...", 0, 0);
-            String fileName = url.substring(url.lastIndexOf('/') + 1);
-            File archive = BinaryInstaller.downloadFromMirrors(url, fileName, l);
-            if (archive == null) return;
-            BinaryInstaller.extractAndInstallBinary(archive, binName(), new File(toolDir(), binName()));
-            try { archive.delete(); } catch (Exception ignored) {}
-            resolved = false; // 重新解析，让 binary() 找到刚安装的文件
-        } catch (Throwable ignored) {
-            // aria2 安装失败不影响主流程
-        }
-    }
-
-    /**
-     * 用 aria2c 多线程（受管 16 连接 / 16 分片）且多镜像源下载到 target。
+     * 用 aria2c 多线程（16 连接 / 16 分片）且多镜像源下载到 target。
      * @param urls 同一文件的多个镜像地址，aria2 会作为镜像源并行使用
      * @return 成功返回 true；aria2 不可用或失败返回 false（调用方回退单线程）
      */
@@ -164,27 +174,6 @@ public final class Aria2Downloader {
         } finally {
             if (p != null && p.isAlive()) p.destroyForcibly();
         }
-    }
-
-    /** 查询 aria2 最新 release 里当前平台（Windows 64 位）的压缩包直链；失败返回 null。 */
-    private static String latestWindowsAssetUrl() {
-        String body = BinaryInstaller.httpGet("https://api.github.com/repos/" + REPO + "/releases/latest", 8000);
-        if (body == null) return null;
-        try {
-            JsonObject o = JsonParser.parseString(body).getAsJsonObject();
-            JsonArray assets = o.getAsJsonArray("assets");
-            if (assets == null) return null;
-            for (JsonElement el : assets) {
-                JsonObject a = el.getAsJsonObject();
-                JsonElement nameEl = a.get("name");
-                JsonElement urlEl = a.get("browser_download_url");
-                if (nameEl == null || nameEl.isJsonNull() || urlEl == null || urlEl.isJsonNull()) continue;
-                String name = nameEl.getAsString().toLowerCase(Locale.ROOT);
-                if (name.contains("win-64bit") && name.endsWith(".zip")) return urlEl.getAsString();
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
     }
 
     /** 后台排空 aria2 输出，避免管道写满导致进程阻塞。 */

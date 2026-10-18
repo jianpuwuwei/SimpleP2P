@@ -187,7 +187,7 @@ public final class BinaryInstaller {
     }
 
     /** GET 返回响应体；失败返回 null。 */
-    static String httpGet(String url, int timeoutMs) {
+    private static String httpGet(String url, int timeoutMs) {
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
@@ -351,37 +351,13 @@ public final class BinaryInstaller {
     private static boolean tryAria2(ExtPaths.ExtTool t, List<String> urls, File target, ProgressListener l) {
         if (!ModConfig.getInstance().isAria2Download()) return false;
         try {
-            Aria2Downloader.ensureBinary(l); // Windows 上缺失时自动安装（仅一次）
+            // aria2c 已内置于 mod 资源，binary() 会在首次使用时释放到受管目录
             if (Aria2Downloader.binary() == null) return false;
             l.onProgress("下载 " + describe(t) + " ...", 0, 0);
             return Aria2Downloader.download(urls, target, l);
         } catch (Throwable e) {
             return false;
         }
-    }
-
-    /**
-     * 通用下载入口（供 aria2 自身引导安装使用）：镜像优先 + 官方兜底，逐个单线程尝试，
-     * 成功返回缓存文件，全部失败返回 null。不抛异常，由调用方决定后续行为。
-     */
-    static File downloadFromMirrors(String official, String fileName, ProgressListener l) {
-        List<String> candidates = new ArrayList<>();
-        for (String mirror : ModConfig.getInstance().getDownloadMirrors()) {
-            candidates.add(mirror + official);
-        }
-        candidates.add(official);
-        File cacheDir = new File(ExtPaths.installRoot(), "download");
-        if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) return null;
-        File target = new File(cacheDir, fileName);
-        for (String url : rankCandidates(candidates)) {
-            try {
-                downloadFile(url, target, l);
-                return target;
-            } catch (Exception e) {
-                deleteQuietly(target);
-            }
-        }
-        return null;
     }
 
     /**
