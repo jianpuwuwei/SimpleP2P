@@ -135,6 +135,9 @@ public class ModConfig {
     /** 下载时是否忽略 SSL 证书校验。 */
     private boolean ignoreSslVerify = false;
 
+    /** 下载官方客户端时优先使用 aria2 多线程 + 多镜像源（Windows 缺失时自动安装）。 */
+    private boolean aria2Download = true;
+
     /** 公共节点列表接口（Uptime Kuma 状态页）。 */
     private String nodeListUrl = "https://info.qtet.cn/uptime/api/status-page/easytier";
 
@@ -223,6 +226,7 @@ public class ModConfig {
         m.put("extConnectTimeoutMs", extConnectTimeoutMs);
         m.put("windowsOpenP2PAutoInstall", windowsOpenP2PAutoInstall);
         m.put("ignoreSslVerify", ignoreSslVerify);
+        m.put("aria2Download", aria2Download);
         m.put("nodeListUrl", nodeListUrl);
         m.put("autoSelectNode", autoSelectNode);
         m.put("nodePingTimeoutMs", nodePingTimeoutMs);
@@ -308,6 +312,7 @@ public class ModConfig {
         this.extConnectTimeoutMs = positiveOrDefault(SimpleJson.getInt(m, "extConnectTimeoutMs"), 20000);
         this.windowsOpenP2PAutoInstall = Objects.equals(Boolean.TRUE, m.get("windowsOpenP2PAutoInstall"));
         this.ignoreSslVerify = Objects.equals(Boolean.TRUE, m.get("ignoreSslVerify"));
+        this.aria2Download = !Objects.equals(Boolean.FALSE, m.get("aria2Download"));
         this.nodeListUrl = notNullOrElse(SimpleJson.getStr(m, "nodeListUrl"),
                 "https://info.qtet.cn/uptime/api/status-page/easytier");
         this.autoSelectNode = !Objects.equals(Boolean.FALSE, m.get("autoSelectNode"));
@@ -607,6 +612,9 @@ public class ModConfig {
 
     public boolean isIgnoreSslVerify() { return ignoreSslVerify; }
     public void setIgnoreSslVerify(boolean v) { this.ignoreSslVerify = v; save(); }
+
+    public boolean isAria2Download() { return aria2Download; }
+    public void setAria2Download(boolean v) { this.aria2Download = v; save(); }
 
     public String getNodeListUrl() { return nodeListUrl; }
     public boolean isAutoSelectNode() { return autoSelectNode; }

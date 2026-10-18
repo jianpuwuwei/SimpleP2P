@@ -277,7 +277,8 @@ public final class EasyTierManager {
         while (System.currentTimeMillis() < deadline && isRunning()) {
             server = findServerPeer();
             if (server != null) break;
-            try { Thread.sleep(1500); } catch (InterruptedException e) { break; }
+            // 更短的轮询间隔：节点上线通常在数百毫秒内，1.5s 会平白多等好几秒
+            try { Thread.sleep(700); } catch (InterruptedException e) { break; }
         }
         if (server == null) {
             proc.stop();
@@ -290,16 +291,22 @@ public final class EasyTierManager {
         // 目标端口取自服务端 hostname，服务端换端口也能自适应。
         int localPort = NetUtils.findFreePort();
         boolean ready = false;
-        while (System.currentTimeMillis() < deadline && isRunning() && localPort > 0) {
-            if (addPortForward(localPort, server.ip, server.mcPort)) {
-                // 转发建立后需留时间让通道就绪，立刻验证容易误判为失败
-                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
-                if (verifyForwardAlive(localPort)) {
-                    ready = true;
-                    break;
+        boolean added = false;
+        while (!ready && System.currentTimeMillis() < deadline && isRunning() && localPort > 0) {
+            if (!added) {
+                added = addPortForward(localPort, server.ip, server.mcPort);
+                if (!added) {
+                    // RPC 尚未就绪导致添加失败：稍后重试
+                    try { Thread.sleep(800); } catch (InterruptedException e) { break; }
+                    continue;
                 }
             }
-            try { Thread.sleep(1200); } catch (InterruptedException e) { break; }
+            // 转发添加成功后通道通常几百毫秒就绪，直接轮询校验，不再固定等待 3s
+            if (verifyForwardAlive(localPort)) {
+                ready = true;
+                break;
+            }
+            try { Thread.sleep(500); } catch (InterruptedException e) { break; }
         }
         if (!ready) {
             proc.stop();

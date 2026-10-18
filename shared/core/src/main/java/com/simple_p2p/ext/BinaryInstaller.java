@@ -187,7 +187,7 @@ public final class BinaryInstaller {
     }
 
     /** GET 返回响应体；失败返回 null。 */
-    private static String httpGet(String url, int timeoutMs) {
+    static String httpGet(String url, int timeoutMs) {
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
@@ -321,7 +321,10 @@ public final class BinaryInstaller {
         String fileName = slash >= 0 ? official.substring(slash + 1) : (t == ExtPaths.ExtTool.EASYTIER ? "easytier" : "openp2p") + archiveExt(t);
         File target = new File(cacheDir, fileName);
 
-        // 先并行测试所有候选地址，按实测延迟排序后再下载，避免逐个等死镜像的连接超时
+        // 优先用 aria2 多线程 + 多镜像源下载（显著提速）；此时无需先并行测速
+        if (tryAria2(t, candidates, target, l)) return target;
+
+        // aria2 不可用或失败：再并行测试候选地址，按实测延迟排序后单线程逐个回退
         l.onProgress("测试下载地址 ...", 0, 0);
         List<String> ordered = rankCandidates(candidates);
 
@@ -342,6 +345,43 @@ public final class BinaryInstaller {
                 : "";
         throw new ExtException("下载失败" + hint + "。可手动下载官方客户端压缩包放入 "
                 + ExtPaths.toolDir(t).getAbsolutePath() + "，重启游戏后自动识别");
+    }
+
+    /** 尝试用 aria2 多线程下载；aria2 未启用 / 不可用 / 失败都返回 false，由上层回退单线程。 */
+    private static boolean tryAria2(ExtPaths.ExtTool t, List<String> urls, File target, ProgressListener l) {
+        if (!ModConfig.getInstance().isAria2Download()) return false;
+        try {
+            Aria2Downloader.ensureBinary(l); // Windows 上缺失时自动安装（仅一次）
+            if (Aria2Downloader.binary() == null) return false;
+            l.onProgress("下载 " + describe(t) + " ...", 0, 0);
+            return Aria2Downloader.download(urls, target, l);
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /**
+     * 通用下载入口（供 aria2 自身引导安装使用）：镜像优先 + 官方兜底，逐个单线程尝试，
+     * 成功返回缓存文件，全部失败返回 null。不抛异常，由调用方决定后续行为。
+     */
+    static File downloadFromMirrors(String official, String fileName, ProgressListener l) {
+        List<String> candidates = new ArrayList<>();
+        for (String mirror : ModConfig.getInstance().getDownloadMirrors()) {
+            candidates.add(mirror + official);
+        }
+        candidates.add(official);
+        File cacheDir = new File(ExtPaths.installRoot(), "download");
+        if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) return null;
+        File target = new File(cacheDir, fileName);
+        for (String url : rankCandidates(candidates)) {
+            try {
+                downloadFile(url, target, l);
+                return target;
+            } catch (Exception e) {
+                deleteQuietly(target);
+            }
+        }
+        return null;
     }
 
     /**
@@ -543,6 +583,14 @@ public final class BinaryInstaller {
      * <p>返回的是稳定位置的文件（临时解压目录会在结束时清理），可直接用于启动。
      */
     private static File extractAndInstall(ExtPaths.ExtTool t, File archive) throws ExtException {
+        return extractAndInstallBinary(archive, ExtPaths.toolBinaryName(t), ExtPaths.toolBin(t));
+    }
+
+    /**
+     * 通用解压安装：解压归档，把名为 {@code binaryName} 的可执行文件及其同目录内容安装到 {@code destBin}。
+     * <p>aria2 等非 ExtTool 管理的二进制也走这里。
+     */
+    static File extractAndInstallBinary(File archive, String binaryName, File destBin) throws ExtException {
         File temp = new File(ExtPaths.installRoot(), "tmp-" + System.currentTimeMillis());
         if (!temp.mkdirs()) throw new ExtException("无法创建临时解压目录");
         try {
@@ -551,21 +599,19 @@ public final class BinaryInstaller {
             } else {
                 extractTarGz(archive, temp);
             }
-            String want = ExtPaths.toolBinaryName(t);
-            File found = findBinaryRecursively(temp, want, 0);
+            File found = findBinaryRecursively(temp, binaryName, 0);
             if (found == null) {
-                throw new ExtException("解压后未找到可执行文件 " + want + "（压缩包可能损坏或布局变化）");
+                throw new ExtException("解压后未找到可执行文件 " + binaryName + "（压缩包可能损坏或布局变化）");
             }
-            File dest = ExtPaths.toolBin(t);
-            File toolDir = ExtPaths.toolDir(t);
-            // 把可执行文件所在目录的“全部内容”复制到工具目录：EasyTier 依赖同目录的 wintun.dll 等，
+            File destDir = destBin.getParentFile();
+            // 把可执行文件所在目录的“全部内容”复制过去：EasyTier 依赖同目录的 wintun.dll 等，
             // 只复制单个 exe 会导致无法创建 TUN 虚拟网卡。
-            copyDirContents(found.getParentFile(), toolDir);
-            if (dest.isFile()) {
-                if (!ExtPaths.isWindows()) dest.setExecutable(true, false);
-                return dest;
+            copyDirContents(found.getParentFile(), destDir);
+            if (destBin.isFile()) {
+                if (!ExtPaths.isWindows()) destBin.setExecutable(true, false);
+                return destBin;
             }
-            throw new ExtException("可执行文件复制后未找到: " + dest.getAbsolutePath());
+            throw new ExtException("可执行文件复制后未找到: " + destBin.getAbsolutePath());
         } finally {
             deleteRecursive(temp);
         }
