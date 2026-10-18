@@ -15,9 +15,7 @@ pluginManagement {
 // Minecraft 原版 jar 的“捆绑仓库”，限制项目级仓库会让它找不到 net.minecraft:client。
 rootProject.name = "SimpleP2P"
 
-// 5 个加载器 / 版本模块；shared 目录只是共用的源码目录（通过各模块的 srcDirs 引入），不是独立工程
+// MC 1.20.1 的 3 个加载器模块；shared 目录只是共用的源码目录（通过各模块的 srcDirs 引入），不是独立工程
 include("forge-1.20.1")
 include("neoforge-1.20.1")
-include("neoforge-1.21.1")
 include("fabric-1.20.1")
-include("fabric-1.21.1")
