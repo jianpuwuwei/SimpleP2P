@@ -133,11 +133,16 @@ public final class EasyTierManager {
         if (this.rpcPort > 0) {
             args.add("--rpc-portal"); args.add("127.0.0.1:" + this.rpcPort);
         }
-        args.add("--enable-kcp-proxy");
-        args.add("--enable-quic-proxy");
+        // 只保留 --use-smoltcp（--no-tun 下的用户态 TCP 栈），其余"高延迟/丢包链路"调优全部去掉：
+        // --default-protocol tcp 会让 MC 本身的 TCP 流再套一层 TCP，产生队头阻塞——
+        // 任何一次重传/延迟都会卡住其后所有实体位置更新（表现为生物一顿一顿），而聊天/方块是事件驱动无感；
+        // --compression zstd 对每 tick 的小包只会徒增 CPU 与延迟（ET 默认 none）；
+        // kcp/quic 代理会额外叠一层可靠 UDP 缓冲。本链路实测 1.66ms/0% 丢包，这些只会制造停顿。
         args.add("--use-smoltcp");
-        args.add("--compression"); args.add("zstd");
-        args.add("--default-protocol"); args.add("tcp");
+        // 显式用 ET 默认的 udp 承载，避免 TCP-over-TCP
+        args.add("--default-protocol"); args.add("udp");
+        // 延迟优先选路（默认按最短跳数），避免多跳转发放大抖动
+        args.add("--latency-first"); args.add("true");
         args.add("--encryption-algorithm"); args.add("aes-gcm");
         args.add("--peers");
         args.addAll(resolvePublicNodes(log));
@@ -253,11 +258,10 @@ public final class EasyTierManager {
         if (this.rpcPort > 0) {
             args.add("--rpc-portal"); args.add("127.0.0.1:" + this.rpcPort);
         }
-        args.add("--enable-kcp-proxy");
-        args.add("--enable-quic-proxy");
+        // 与服务端同一套传输参数：udp 承载 + 去掉压缩/kcp/quic 代理（见 startServer 处说明）。
         args.add("--use-smoltcp");
-        args.add("--compression"); args.add("zstd");
-        args.add("--default-protocol"); args.add("tcp");
+        args.add("--default-protocol"); args.add("udp");
+        args.add("--latency-first"); args.add("true");
         args.add("--encryption-algorithm"); args.add("aes-gcm");
         args.add("--peers");
         args.addAll(resolvePublicNodes(log));
@@ -316,7 +320,7 @@ public final class EasyTierManager {
         if (log != null) {
             log.accept("本地转发就绪 127.0.0.1:" + localPort);
         }
-        return ClientTarget.ok("127.0.0.1", localPort, "easytier");
+        return ClientTarget.ok("127.0.0.1", localPort, "easytier", server.ip, server.mcPort);
     }
 
     /**
@@ -460,10 +464,14 @@ public final class EasyTierManager {
                                                 Consumer<String> log) throws Exception {
         if (ExtPaths.isWindows()) {
             File logFile = new File(cwd, "easytier.log");
+            File pidFile = new File(cwd, "easytier.pid");
             // 已启用 --no-tun：不创建虚拟网卡，故无需管理员权限。
             // 不再走 UAC 提权——提权会产生分离的管理员进程，退出时必须以管理员身份
             // taskkill 才能回收（会弹窗/阻塞，玩家感觉"断开后卡住"），且每次启动都弹窗。
-            return ProcessSupervisor.startWindowsHidden(bin, args, cwd, logFile);
+            // 启动前先回收上一次残留的 easytier-core：游戏被强制结束（启动器直接杀 JVM）时退出钩子
+            // 不执行，旧实例会留在网络里，再起新实例就会同一网络出现两个节点、持续制造握手/路由抖动。
+            ProcessSupervisor.killStaleFromPidFile(pidFile, "easytier");
+            return ProcessSupervisor.startWindowsHidden(bin, args, cwd, logFile, pidFile);
         }
         return ProcessSupervisor.start(bin, args, cwd, line -> {
             if (log != null) log.accept(line);
@@ -513,15 +521,24 @@ public final class EasyTierManager {
         public final String host;
         public final int port;
         public final String mode;
+        /** 服务端在组网中的虚拟 IP（由 peer 列表发现，供客户端记录服务端信息）。 */
+        public final String serverHost;
+        /** 服务端 MC 端口（由服务端 hostname 携带）。 */
+        public final int serverPort;
         public final String error;
-        private ClientTarget(boolean ok, String host, int port, String mode, String error) {
-            this.ok = ok; this.host = host; this.port = port; this.mode = mode; this.error = error;
+        private ClientTarget(boolean ok, String host, int port, String mode,
+                             String serverHost, int serverPort, String error) {
+            this.ok = ok; this.host = host; this.port = port; this.mode = mode;
+            this.serverHost = serverHost; this.serverPort = serverPort; this.error = error;
         }
         public static ClientTarget ok(String host, int port, String mode) {
-            return new ClientTarget(true, host, port, mode, null);
+            return ok(host, port, mode, null, 0);
+        }
+        public static ClientTarget ok(String host, int port, String mode, String serverHost, int serverPort) {
+            return new ClientTarget(true, host, port, mode, serverHost, serverPort, null);
         }
         public static ClientTarget fail(String error) {
-            return new ClientTarget(false, null, 0, null, error);
+            return new ClientTarget(false, null, 0, null, null, 0, error);
         }
     }
 }

@@ -78,7 +78,8 @@ public final class ProcessSupervisor {
      * Windows 下隐藏窗口启动（不弹出控制台黑窗），输出重定向到 logFile 便于排错。
      * 返回的 supervisor 按 PID 管理（隐藏启动的进程同样拿不到管道输出）。
      */
-    public static ProcessSupervisor startWindowsHidden(File bin, List<String> args, File cwd, File logFile)
+    public static ProcessSupervisor startWindowsHidden(File bin, List<String> args, File cwd, File logFile,
+                                                       File pidFile)
             throws IOException {
         StringBuilder sb = new StringBuilder();
         sb.append("$p = Start-Process -FilePath '").append(bin.getAbsolutePath()).append("'");
@@ -91,7 +92,7 @@ public final class ProcessSupervisor {
             sb.append(" -RedirectStandardError '").append(err.getAbsolutePath()).append("'");
         }
         sb.append(" -PassThru; if ($p) { $p.Id } else { Write-Error 'start failed' }");
-        return runPowerShellForPid(sb.toString(), logFile);
+        return runPowerShellForPid(sb.toString(), logFile, pidFile);
     }
 
     /**
@@ -166,7 +167,8 @@ public final class ProcessSupervisor {
     }
 
     /** 用 powershell 执行脚本并读取其输出的 PID（第一行纯数字）。 */
-    private static ProcessSupervisor runPowerShellForPid(String script, File logFile) throws IOException {
+    private static ProcessSupervisor runPowerShellForPid(String script, File logFile, File pidFile)
+            throws IOException {
         // 注意：第一个参数必须是可执行程序本身（powershell），否则会被当作程序名导致 error=2
         ProcessBuilder pb = new ProcessBuilder(
                 "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script);
@@ -183,6 +185,12 @@ public final class ProcessSupervisor {
             p.waitFor();
             if (pid == null) {
                 throw new IOException("启动失败或被用户取消（未取得进程 PID）");
+            }
+            // 记录 PID，供下次启动回收本次残留的进程（游戏被强制结束、退出钩子来不及执行时兜底）
+            if (pidFile != null) {
+                try {
+                    java.nio.file.Files.writeString(pidFile.toPath(), String.valueOf(pid), StandardCharsets.UTF_8);
+                } catch (Exception ignored) {}
             }
             return new ProcessSupervisor(null, null, null, pid, logFile, null);
         } catch (InterruptedException e) {
@@ -241,7 +249,7 @@ public final class ProcessSupervisor {
         }
     }
 
-    /** 停止进程：普通进程 destroy → 3s → forcibly；提权分离进程写停机标记 + 尽力 taskkill。 */
+    /** 停止进程：普通进程 destroy → 3s → forcibly；按 PID 管理的进程写停机标记 + 强杀并确认退出。 */
     public void stop() {
         alive.set(false);
         if (elevatedPid != null) {
@@ -250,6 +258,18 @@ public final class ProcessSupervisor {
                 try { java.nio.file.Files.writeString(stopFile.toPath(), "stop"); } catch (Exception ignored) {}
             }
             taskkillPid(elevatedPid);
+            // 原来是发完 taskkill 立即返回、不校验结果，进程若没被杀掉就会残留，
+            // 下次启动再起一个 → 同一网络出现两个节点。这里等待并确认进程确实退出，未退出再补一次强杀。
+            long deadline = System.currentTimeMillis() + 5000;
+            while (processAliveByPid(elevatedPid) && System.currentTimeMillis() < deadline) {
+                try { Thread.sleep(200); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            if (processAliveByPid(elevatedPid)) {
+                taskkillPid(elevatedPid);
+            }
             if (!processAliveByPid(elevatedPid) && stopFile != null) {
                 try { java.nio.file.Files.deleteIfExists(stopFile.toPath()); } catch (Exception ignored) {}
             }
@@ -289,7 +309,65 @@ public final class ProcessSupervisor {
         try {
             new ProcessBuilder("taskkill", "/PID", String.valueOf(pid), "/T", "/F")
                     .redirectErrorStream(true).start();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * 回收上一次会话残留的外部进程：pid 文件中的 PID 若仍在运行则强杀并等待退出。
+     * <p>用于兜底"游戏被强制结束（JVM 被直接杀掉，退出钩子不执行）"导致的进程残留——
+     * 否则下次启动会再起一个同网络的节点，同一网络出现两个节点会持续制造握手/路由抖动。
+     *
+     * @param namePart 进程映像名需包含的片段（如 easytier），避免 PID 复用误杀无关进程
+     */
+    public static void killStaleFromPidFile(File pidFile, String namePart) {
+        if (pidFile == null || !pidFile.isFile()) return;
+        long pid;
+        try {
+            String s = java.nio.file.Files.readString(pidFile.toPath(), StandardCharsets.UTF_8).trim();
+            if (!s.matches("\\d+")) {
+                java.nio.file.Files.deleteIfExists(pidFile.toPath());
+                return;
+            }
+            pid = Long.parseLong(s);
+        } catch (Exception e) {
+            return;
+        }
+        if (pid <= 0 || pid == ProcessHandle.current().pid()) return;
+        if (!processAliveWithName(pid, namePart)) {
+            try { java.nio.file.Files.deleteIfExists(pidFile.toPath()); } catch (Exception ignored) {}
+            return;
+        }
+        taskkillPid(pid);
+        long deadline = System.currentTimeMillis() + 5000;
+        while (processAliveWithName(pid, namePart) && System.currentTimeMillis() < deadline) {
+            try { Thread.sleep(200); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (processAliveWithName(pid, namePart)) taskkillPid(pid);
+    }
+
+    /** 指定 PID 是否存活且进程映像名包含 namePart。 */
+    private static boolean processAliveWithName(long pid, String namePart) {
+        try {
+            Process p = new ProcessBuilder("tasklist", "/FI", "PID eq " + pid, "/FO", "CSV", "/NH")
+                    .redirectErrorStream(true).start();
+            String out;
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                StringBuilder sb = new StringBuilder();
+                String l;
+                while ((l = br.readLine()) != null) sb.append(l);
+                out = sb.toString();
+            }
+            p.destroyForcibly();
+            String lower = out.toLowerCase();
+            return lower.contains("\"" + pid + "\"") && lower.contains(namePart.toLowerCase());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 最近 n 行输出（新→旧顺序）。隐藏/提权启动时管道无输出，改为读取日志文件尾部。 */

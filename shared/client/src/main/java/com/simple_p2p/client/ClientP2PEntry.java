@@ -3,6 +3,7 @@ package com.simple_p2p.client;
 import com.simple_p2p.config.ModConfig;
 import com.simple_p2p.ext.ExternalNetManager;
 import com.simple_p2p.proxy.UdpServerProbe;
+import com.simple_p2p.server.ServerInfoCache;
 import com.simple_p2p.util.AddressRecognizer;
 
 /**
@@ -57,14 +58,23 @@ public class ClientP2PEntry {
 
         UdpServerProbe probe = new UdpServerProbe();
         try {
+            // 连过一次后本地已有该服务端的图标与标语，直接展示服务端真实信息
+            ServerInfoCache.Info cached = ServerInfoCache.load(r.address);
             UdpServerProbe.ProbeResult pr = probe.probe(r.address);
+            if (cached != null && !cached.motd.isBlank()) {
+                // UDP 探测失败（服务端在 NAT 后）时延迟未知，但已缓存的信息仍可展示
+                int ping = pr.success ? pr.pingMs : -1;
+                return new PingResult(true, ping, cached.motd, cached.icon);
+            }
             if (!pr.success) {
                 // 跨机联机时服务端在 NAT 之后，UDP 探测包无法到达属正常现象，不应当作错误提示
                 return new PingResult(true, -1,
-                        "\u00a7aP2P\u00a7r | 房间码联机 | \u00a77延迟需连接后测");
+                        "\u00a7aP2P\u00a7r | 房间码联机 | \u00a77延迟需连接后测",
+                        cached != null ? cached.icon : null);
             }
             return new PingResult(true, pr.pingMs,
-                    "\u00a7aP2P\u00a7r | " + pr.getModeDescription() + " | \u00a7b" + pr.getFormattedPing());
+                    "\u00a7aP2P\u00a7r | " + pr.getModeDescription() + " | \u00a7b" + pr.getFormattedPing(),
+                    cached != null ? cached.icon : null);
         } finally {
             probe.close();
         }
@@ -90,11 +100,18 @@ public class ClientP2PEntry {
         public final boolean handled;
         public final int ping;
         public final String motd;
+        /** 服务端图标 PNG 字节（本地缓存，无图标时为 null）。 */
+        public final byte[] icon;
 
         public PingResult(boolean handled, int ping, String motd) {
+            this(handled, ping, motd, null);
+        }
+
+        public PingResult(boolean handled, int ping, String motd, byte[] icon) {
             this.handled = handled;
             this.ping = ping;
             this.motd = motd;
+            this.icon = icon;
         }
     }
 }
