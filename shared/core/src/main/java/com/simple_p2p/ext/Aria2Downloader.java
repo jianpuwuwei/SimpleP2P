@@ -18,10 +18,15 @@ import java.util.Locale;
 /**
  * 基于 aria2c 的多线程 / 多源下载器。
  *
- * <p>aria2c 二进制已内置在 mod 的 jar 资源里（{@code simplep2p/native/win/aria2c.exe}），
- * 首次使用时直接释放到 {@code <安装根>/aria2/}，无需联网下载。非 Windows 平台没有官方
- * 二进制，因此回退到系统 PATH 中的 aria2c；仍不可用时由调用方回退到
- * {@link BinaryInstaller} 的单线程下载。
+ * <p>Windows：内置 64 位二进制（{@code simplep2p/native/win/aria2c.exe}）随 jar 分发，
+ * 首次使用时释放到 {@code <安装根>/aria2/}，无需联网。
+ *
+ * <p>Linux / macOS：aria2 官方未发布对应平台二进制，故不内嵌，只在系统 PATH 与常见
+ * 安装目录中探测用户自行安装的 aria2c；找不到时通过 {@link #installHint()} 返回安装命令
+ * 交给调用方提示，并回退到 {@link BinaryInstaller} 的单线程下载（不自动执行任何安装命令）。
+ *
+ * <p>所有平台都可在设置界面（配置项 {@code aria2BinPath}）手动指定 aria2c 的可执行文件
+ * 或其所在目录，手动指定的路径优先于上面的自动探测。
  */
 public final class Aria2Downloader {
 
@@ -29,10 +34,6 @@ public final class Aria2Downloader {
 
     /** 内置的 Windows 64 位二进制在 jar 中的路径。 */
     private static final String EMBEDDED_WIN_RESOURCE = "/simplep2p/native/win/aria2c.exe";
-
-    /** 已解析到的可执行文件；未解析时为 null。 */
-    private static volatile File cachedBin;
-    private static volatile boolean resolved;
 
     /** aria2c 可执行文件名（含平台后缀）。 */
     private static String binName() {
@@ -44,23 +45,33 @@ public final class Aria2Downloader {
         return new File(ExtPaths.installRoot(), "aria2");
     }
 
-    /** 定位可用的 aria2c：受管目录 → 释放内置资源 → 系统 PATH；都没有返回 null。 */
+    /**
+     * 定位可用的 aria2c，每次调用都重新解析（配置可能在设置界面被随时修改）。
+     * <p>优先级：配置里手动指定的路径 → Windows 受管目录（释放内置二进制）→
+     * 系统 PATH 与平台常见目录。都没有返回 null。
+     */
     public static File binary() {
-        if (resolved) return cachedBin;
-        File managed = new File(toolDir(), binName());
-        if (managed.isFile() && managed.length() > 0) {
-            cachedBin = managed;
-            resolved = true;
-            return cachedBin;
+        File configured = configuredBinary();
+        if (configured != null) return configured;
+        if (ExtPaths.isWindows()) {
+            File managed = new File(toolDir(), binName());
+            if (managed.isFile() && managed.length() > 0) return managed;
+            if (extractEmbedded(managed)) return managed;
         }
-        if (extractEmbedded(managed)) {
-            cachedBin = managed;
-            resolved = true;
-            return cachedBin;
+        return findOnPath();
+    }
+
+    /** 读取配置中手动指定的 aria2c：可直接指向可执行文件或其所在目录；未配置 / 无效返回 null。 */
+    private static File configuredBinary() {
+        String p = ModConfig.getInstance().getAria2BinPath();
+        if (p == null || p.isBlank()) return null;
+        File f = new File(p.trim());
+        if (f.isFile()) return f;
+        if (f.isDirectory()) {
+            File bin = new File(f, binName());
+            if (bin.isFile()) return bin;
         }
-        cachedBin = findOnPath();
-        resolved = true;
-        return cachedBin;
+        return null;
     }
 
     /** 判断当前平台是否有内置二进制可释放（目前仅 Windows 64 位）。 */
@@ -93,17 +104,81 @@ public final class Aria2Downloader {
         }
     }
 
-    /** 在系统 PATH 里查找 aria2c（非 Windows 平台的主要来源）。 */
+    /** 在系统 PATH 与平台常见安装目录里查找 aria2c（Linux / macOS 的主要来源）。 */
     private static File findOnPath() {
-        String path = System.getenv("PATH");
-        if (path == null || path.isEmpty()) return null;
         String name = binName();
-        for (String dir : path.split(File.pathSeparator)) {
-            if (dir == null || dir.isBlank()) continue;
+        String path = System.getenv("PATH");
+        if (path != null && !path.isEmpty()) {
+            for (String dir : path.split(File.pathSeparator)) {
+                if (dir == null || dir.isBlank()) continue;
+                File f = new File(dir, name);
+                if (f.isFile()) return f;
+            }
+        }
+        // 图形化启动的 MC 客户端 PATH 可能不含包管理器路径，补充探测常见目录
+        for (File dir : commonDirs()) {
             File f = new File(dir, name);
             if (f.isFile()) return f;
         }
         return null;
+    }
+
+    /** 各平台 aria2c 常见的安装目录。 */
+    private static List<File> commonDirs() {
+        List<File> dirs = new ArrayList<>();
+        if (ExtPaths.isMac()) {
+            dirs.add(new File("/opt/homebrew/bin")); // Apple Silicon Homebrew
+            dirs.add(new File("/usr/local/bin"));    // Intel Homebrew / 手动安装
+            dirs.add(new File("/opt/local/bin"));    // MacPorts
+        } else if (ExtPaths.isLinux()) {
+            dirs.add(new File("/usr/bin"));
+            dirs.add(new File("/usr/local/bin"));
+            dirs.add(new File("/bin"));
+            dirs.add(new File("/snap/bin"));
+            dirs.add(new File("/var/lib/flatpak/exports/bin"));
+        }
+        return dirs;
+    }
+
+    /**
+     * 当前平台缺少 aria2c 时的安装提示；Windows 内置二进制无需安装，返回 null。
+     * 若配置里手动指定了路径但无效，则提示检查该路径。
+     */
+    public static String installHint() {
+        String cfg = ModConfig.getInstance().getAria2BinPath();
+        if (cfg != null && !cfg.isBlank()) {
+            return "配置的 aria2c 路径无效: " + cfg + "，请检查后重试（当前回退单线程）";
+        }
+        if (ExtPaths.isWindows()) return null;
+        if (ExtPaths.isMac()) {
+            return "未检测到 aria2c，可执行 `brew install aria2` 启用多线程下载（当前回退单线程）";
+        }
+        if (ExtPaths.isLinux()) {
+            return "未检测到 aria2c，可执行 `" + linuxInstallCommand()
+                    + "` 启用多线程下载（当前回退单线程）";
+        }
+        return "未检测到 aria2c，多线程下载不可用（当前回退单线程）";
+    }
+
+    /** 按发行版探测包管理器，给出对应的 aria2 安装命令。 */
+    private static String linuxInstallCommand() {
+        if (existsInPath("apt-get")) return "sudo apt-get install aria2";
+        if (existsInPath("dnf")) return "sudo dnf install aria2";
+        if (existsInPath("yum")) return "sudo yum install aria2";
+        if (existsInPath("pacman")) return "sudo pacman -S aria2";
+        if (existsInPath("zypper")) return "sudo zypper install aria2";
+        if (existsInPath("apk")) return "sudo apk add aria2";
+        return "使用发行版包管理器安装 aria2";
+    }
+
+    private static boolean existsInPath(String exe) {
+        String path = System.getenv("PATH");
+        if (path == null || path.isEmpty()) return false;
+        for (String dir : path.split(File.pathSeparator)) {
+            if (dir == null || dir.isBlank()) continue;
+            if (new File(dir, exe).isFile()) return true;
+        }
+        return false;
     }
 
     /**
