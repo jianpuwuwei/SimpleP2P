@@ -55,15 +55,24 @@ public final class ExternalNetManager {
         public final String host;
         public final int port;
         public final String mode;
+        /** 服务端组网虚拟 IP（EasyTier 发现；本地/OpenP2P 可能为空）。 */
+        public final String serverHost;
+        /** 服务端 MC 端口（用于记录到本地服务器信息）。 */
+        public final int serverPort;
         public final String error;
-        private ConnectTarget(boolean ok, String host, int port, String mode, String error) {
-            this.ok = ok; this.host = host; this.port = port; this.mode = mode; this.error = error;
+        private ConnectTarget(boolean ok, String host, int port, String mode,
+                              String serverHost, int serverPort, String error) {
+            this.ok = ok; this.host = host; this.port = port; this.mode = mode;
+            this.serverHost = serverHost; this.serverPort = serverPort; this.error = error;
         }
         public static ConnectTarget ok(String host, int port, String mode) {
-            return new ConnectTarget(true, host, port, mode, null);
+            return ok(host, port, mode, null, 0);
+        }
+        public static ConnectTarget ok(String host, int port, String mode, String serverHost, int serverPort) {
+            return new ConnectTarget(true, host, port, mode, serverHost, serverPort, null);
         }
         public static ConnectTarget fail(String error) {
-            return new ConnectTarget(false, null, 0, null, error);
+            return new ConnectTarget(false, null, 0, null, null, 0, error);
         }
     }
 
@@ -158,13 +167,15 @@ public final class ExternalNetManager {
         // 本进程正在开同一个房间：直接连本机服务端，避免同机再起一个组网实例
         if (serverRunning && roomCode != null && roomCode.equals(activeRoomCode)) {
             if (chat != null) chat.accept("本机已开启该房间，直连本地服务端");
-            return ConnectTarget.ok("127.0.0.1", mcPort, "local");
+            return rememberServerInfo(roomCode, mcPort,
+                    ConnectTarget.ok("127.0.0.1", mcPort, "local", "127.0.0.1", mcPort));
         }
         // 只有本机内嵌信令注册了该房间号，才说明服务端在本机（不能仅凭端口可达判断）
         if (isLocalRoomServer(roomCode)) {
             if (chat != null) chat.accept("本机已开启该房间，使用本地地址");
             activeRoomCode = roomCode;
-            return ConnectTarget.ok("127.0.0.1", mcPort, "local");
+            return rememberServerInfo(roomCode, mcPort,
+                    ConnectTarget.ok("127.0.0.1", mcPort, "local", "127.0.0.1", mcPort));
         }
         stopAllInternal();
         String mode = modeOrAuto == null ? "auto" : modeOrAuto.toLowerCase();
@@ -172,24 +183,56 @@ public final class ExternalNetManager {
 
         if ("easytier".equals(mode)) {
             EasyTierManager.ClientTarget t = easyTier.startClient(roomCode, mcPort, chat);
-            if (t.ok) { activeRoomCode = roomCode; return ConnectTarget.ok(t.host, t.port, t.mode); }
+            if (t.ok) {
+                activeRoomCode = roomCode;
+                return rememberServerInfo(roomCode, mcPort,
+                        ConnectTarget.ok(t.host, t.port, t.mode, t.serverHost, t.serverPort));
+            }
             return localFallback(roomCode, mcPort, chat, t.error);
         }
         if ("openp2p".equals(mode)) {
             OpenP2PManager.ClientTarget t = openP2P.startClient(roomCode, token, mcPort, chat);
-            if (t.ok) { activeRoomCode = roomCode; return ConnectTarget.ok(t.host, t.port, t.mode); }
+            if (t.ok) {
+                activeRoomCode = roomCode;
+                return rememberServerInfo(roomCode, mcPort,
+                        ConnectTarget.ok(t.host, t.port, t.mode, "", mcPort));
+            }
             return localFallback(roomCode, mcPort, chat, t.error);
         }
         // auto：先 EasyTier，失败且有 token 时回退 OpenP2P
         EasyTierManager.ClientTarget te = easyTier.startClient(roomCode, mcPort, chat);
-        if (te.ok) { activeRoomCode = roomCode; return ConnectTarget.ok(te.host, te.port, te.mode); }
+        if (te.ok) {
+            activeRoomCode = roomCode;
+            return rememberServerInfo(roomCode, mcPort,
+                    ConnectTarget.ok(te.host, te.port, te.mode, te.serverHost, te.serverPort));
+        }
         if (token != null && !token.trim().isEmpty()) {
             if (chat != null) chat.accept("EasyTier 失败，回退 OpenP2P");
             OpenP2PManager.ClientTarget to = openP2P.startClient(roomCode, token, mcPort, chat);
-            if (to.ok) { activeRoomCode = roomCode; return ConnectTarget.ok(to.host, to.port, to.mode); }
+            if (to.ok) {
+                activeRoomCode = roomCode;
+                return rememberServerInfo(roomCode, mcPort,
+                        ConnectTarget.ok(to.host, to.port, to.mode, "", mcPort));
+            }
             return localFallback(roomCode, mcPort, chat, te.error + "；OpenP2P: " + to.error);
         }
         return localFallback(roomCode, mcPort, chat, te.error);
+    }
+
+    /**
+     * 连接成功后将服务端信息写入本地配置。
+     * <p>同一房间条目已存在时用最新观测值覆盖——服务端换 MC 端口 / 换虚拟 IP 后，
+     * 下一次连上即自动更新，无需手动修改。
+     */
+    private ConnectTarget rememberServerInfo(String roomCode, int mcPort, ConnectTarget t) {
+        if (!t.ok) return t;
+        try {
+            int port = t.serverPort > 0 ? t.serverPort : mcPort;
+            ModConfig.getInstance().updateSavedServerInfo(roomCode, t.serverHost, port, t.mode);
+        } catch (Throwable ignored) {
+            // 记录失败不影响连接本身
+        }
+        return t;
     }
 
     /**
@@ -200,7 +243,8 @@ public final class ExternalNetManager {
         if (isLocalRoomServer(roomCode)) {
             if (chat != null) chat.accept("组网失败，但本机已开启该房间，改用本地地址");
             activeRoomCode = roomCode;
-            return ConnectTarget.ok("127.0.0.1", mcPort, "local");
+            return rememberServerInfo(roomCode, mcPort,
+                    ConnectTarget.ok("127.0.0.1", mcPort, "local", "127.0.0.1", mcPort));
         }
         return ConnectTarget.fail(originalError);
     }

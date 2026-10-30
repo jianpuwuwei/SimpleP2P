@@ -4,6 +4,8 @@ import com.simple_p2p.config.ModConfig;
 import com.simple_p2p.enums.ConnectionType;
 import com.simple_p2p.ext.ExternalNetManager;
 import com.simple_p2p.ext.OpenP2PManager;
+import com.simple_p2p.server.McStatusPing;
+import com.simple_p2p.server.ServerInfoCache;
 import com.simple_p2p.util.AddressRecognizer;
 
 import java.util.concurrent.CountDownLatch;
@@ -124,10 +126,31 @@ public class ClientConnectionManager {
                 roomCode, mode, mcPort, msg -> ToastHelper.show("P2P 组网", msg));
         if (t.ok) {
             lastTarget.set(t);
+            refreshServerInfo(roomCode, t);
             ConnectionType ct = "openp2p".equals(t.mode) ? ConnectionType.RELAY : ConnectionType.P2P_DIRECT;
             return new ConnectFinalResult(true, t.host, t.port, t.mode, ct, null);
         }
         return new ConnectFinalResult(false, null, 0, mode, ConnectionType.NONE, t.error);
+    }
+
+    /**
+     * 连接成功后异步查询服务端真实的图标与 MOTD 标语并缓存到本地。
+     * <p>查询失败（服务端未开启状态查询、链路抖动）不影响连接本身；
+     * 每次连上都会重新查询并用最新值覆盖缓存，服务端改了图标/标语即自动更新。
+     */
+    private void refreshServerInfo(String roomCode, ExternalNetManager.ConnectTarget t) {
+        if (t == null || t.host == null || t.host.isBlank() || t.port <= 0) return;
+        Thread th = new Thread(() -> {
+            try {
+                McStatusPing.Result r = McStatusPing.query(
+                        t.host, t.port, ServerInfoProtocol.protocolVersion(), 3000);
+                if (r != null) ServerInfoCache.store(roomCode, r);
+            } catch (Throwable ignored) {
+                // 缓存失败不影响游戏连接
+            }
+        }, "SimpleP2P-ServerInfo");
+        th.setDaemon(true);
+        th.start();
     }
 
     /** 当前最近一次成功的目标（供回调侧查询）。 */
