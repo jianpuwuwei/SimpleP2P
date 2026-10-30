@@ -136,7 +136,15 @@ Output: `forge-1.20.1/build/libs/SimpleP2P-forge-1.20.1-<version>.jar`
 This project is licensed under the **GNU General Public License v3.0** — see the
 [LICENSE](LICENSE) file for the full text.
 
-The bundled downloader binary `simplep2p/native/win/aria2c.exe` is part of
-[aria2](https://github.com/aria2/aria2), licensed under the GNU General Public License v2 or
-later; its license text ships alongside it at
-`shared/core/src/main/resources/simplep2p/native/win/COPYING`.
+For multi-threaded downloads the mod uses [aria2](https://github.com/aria2/aria2):
+
+- On **Windows** a 64-bit `aria2c.exe` is bundled in the jar
+  (`simplep2p/native/win/aria2c.exe`) and extracted on first use. It is licensed under the
+  GNU General Public License v2 or later; its license text ships alongside it at
+  `shared/core/src/main/resources/simplep2p/native/win/COPYING`.
+- On **Linux / macOS** no binary is bundled (aria2 publishes no official builds for these
+  platforms). The mod only probes the system `aria2c` (PATH plus common install dirs such as
+  `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`) and, when it is missing, prints the
+  matching install command (`apt-get install aria2`, `dnf install aria2`, `pacman -S aria2`,
+  `brew install aria2`, ...) before falling back to a single-threaded download. It never runs
+  an install command automatically.
