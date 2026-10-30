@@ -135,8 +135,11 @@ public class ModConfig {
     /** 下载时是否忽略 SSL 证书校验。 */
     private boolean ignoreSslVerify = false;
 
-    /** 下载官方客户端时优先使用 aria2 多线程 + 多镜像源（Windows 缺失时自动安装）。 */
+    /** 下载官方客户端时优先使用 aria2 多线程 + 多镜像源。 */
     private boolean aria2Download = true;
+
+    /** 手动指定的 aria2c 可执行文件或其所在目录，空为按平台自动探测。 */
+    private String aria2BinPath = "";
 
     /** 公共节点列表接口（Uptime Kuma 状态页）。 */
     private String nodeListUrl = "https://info.qtet.cn/uptime/api/status-page/easytier";
@@ -227,6 +230,7 @@ public class ModConfig {
         m.put("windowsOpenP2PAutoInstall", windowsOpenP2PAutoInstall);
         m.put("ignoreSslVerify", ignoreSslVerify);
         m.put("aria2Download", aria2Download);
+        m.put("aria2BinPath", aria2BinPath);
         m.put("nodeListUrl", nodeListUrl);
         m.put("autoSelectNode", autoSelectNode);
         m.put("nodePingTimeoutMs", nodePingTimeoutMs);
@@ -246,6 +250,11 @@ public class ModConfig {
             em.put("lastPingMs", e.lastPingMs);
             em.put("supportsEasyTier", e.supportsEasyTier);
             em.put("supportsOpenP2P", e.supportsOpenP2P);
+            // 客户端首次连上后自动记录的服务端信息（每次连上用最新值覆盖）
+            em.put("serverHost", e.serverHost);
+            em.put("serverPort", e.serverPort);
+            em.put("connectMode", e.connectMode);
+            em.put("lastConnectedAt", e.lastConnectedAt);
             list.add(em);
         }
         m.put("savedRoomServers", list);
@@ -313,6 +322,7 @@ public class ModConfig {
         this.windowsOpenP2PAutoInstall = Objects.equals(Boolean.TRUE, m.get("windowsOpenP2PAutoInstall"));
         this.ignoreSslVerify = Objects.equals(Boolean.TRUE, m.get("ignoreSslVerify"));
         this.aria2Download = !Objects.equals(Boolean.FALSE, m.get("aria2Download"));
+        this.aria2BinPath = notNullOrElse(SimpleJson.getStr(m, "aria2BinPath"), "");
         this.nodeListUrl = notNullOrElse(SimpleJson.getStr(m, "nodeListUrl"),
                 "https://info.qtet.cn/uptime/api/status-page/easytier");
         this.autoSelectNode = !Objects.equals(Boolean.FALSE, m.get("autoSelectNode"));
@@ -349,6 +359,12 @@ public class ModConfig {
                     entry.lastPingMs = n != null ? n.longValue() : -1;
                     entry.supportsEasyTier = SimpleJson.getBool(em, "supportsEasyTier");
                     entry.supportsOpenP2P = SimpleJson.getBool(em, "supportsOpenP2P");
+                    entry.serverHost = notNullOrElse(SimpleJson.getStr(em, "serverHost"), "");
+                    Object sp = em.get("serverPort");
+                    entry.serverPort = sp instanceof Number ? ((Number) sp).intValue() : 0;
+                    entry.connectMode = notNullOrElse(SimpleJson.getStr(em, "connectMode"), "");
+                    Object lc = em.get("lastConnectedAt");
+                    entry.lastConnectedAt = lc instanceof Number ? ((Number) lc).longValue() : 0L;
                     entries.add(entry);
                 }
             }
@@ -539,6 +555,14 @@ public class ModConfig {
         public long lastPingMs = -1;
         public boolean supportsEasyTier;
         public boolean supportsOpenP2P;
+        /** 服务端组网虚拟 IP（EasyTier 连接时由 peer 列表发现；其他方式为空）。 */
+        public String serverHost = "";
+        /** 服务端 MC 端口（由服务端 hostname 携带，换端口后下次连接自动更新）。 */
+        public int serverPort = 0;
+        /** 最近一次成功连接方式：easytier / openp2p / local。 */
+        public String connectMode = "";
+        /** 最近一次成功连接时间（epoch 毫秒）。 */
+        public long lastConnectedAt = 0L;
 
         public SavedServerEntry() {}
 
@@ -547,6 +571,32 @@ public class ModConfig {
             this.roomCode = roomCode;
             this.lastPingMs = -1;
         }
+    }
+
+    /**
+     * 客户端成功连上房间后记录服务端信息；条目不存在时自动创建。
+     * <p>每次连接都会用最新观测值覆盖（服务端换 MC 端口 / 换虚拟 IP 后，下次连上即自动更新），
+     * 因此不需要玩家手动维护这些字段。
+     */
+    public synchronized void updateSavedServerInfo(String roomCode, String serverHost, int serverPort,
+                                                   String connectMode) {
+        if (roomCode == null || roomCode.isBlank()) return;
+        SavedServerEntry entry = null;
+        for (SavedServerEntry e : savedRoomServers) {
+            if (e != null && e.roomCode != null && e.roomCode.equalsIgnoreCase(roomCode)) {
+                entry = e;
+                break;
+            }
+        }
+        if (entry == null) {
+            entry = new SavedServerEntry("P2P房间-" + roomCode, roomCode);
+            savedRoomServers.add(entry);
+        }
+        entry.serverHost = serverHost != null ? serverHost.trim() : "";
+        entry.serverPort = (serverPort > 0 && serverPort <= 65535) ? serverPort : 0;
+        entry.connectMode = connectMode != null ? connectMode.trim() : "";
+        entry.lastConnectedAt = System.currentTimeMillis();
+        save();
     }
 
     public void addSavedServer(String name, String roomCode) {
@@ -615,6 +665,9 @@ public class ModConfig {
 
     public boolean isAria2Download() { return aria2Download; }
     public void setAria2Download(boolean v) { this.aria2Download = v; save(); }
+
+    public String getAria2BinPath() { return aria2BinPath; }
+    public void setAria2BinPath(String v) { this.aria2BinPath = v == null ? "" : v.trim(); }
 
     public String getNodeListUrl() { return nodeListUrl; }
     public boolean isAutoSelectNode() { return autoSelectNode; }

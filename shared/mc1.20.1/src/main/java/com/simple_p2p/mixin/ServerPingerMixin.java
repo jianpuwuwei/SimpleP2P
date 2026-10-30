@@ -40,6 +40,8 @@ public abstract class ServerPingerMixin {
 
         data.ping = result.ping;
         data.motd = Component.literal(result.motd);
+        // 连过一次后使用本地缓存的服务端图标；未缓存时保持无图标
+        if (result.icon != null) data.setIconBytes(result.icon);
 
         // 回调上层告知 ping 完成
         try {
