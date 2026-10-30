@@ -95,6 +95,7 @@ public abstract class SimpleP2PConfigScreen extends Screen {
         options.add(ConfigOption.bool("自动下载官方客户端", cfg::isAutoDownloadBinaries, cfg::setAutoDownloadBinaries));
         options.add(ConfigOption.bool("下载时忽略 SSL 校验", cfg::isIgnoreSslVerify, cfg::setIgnoreSslVerify));
         options.add(ConfigOption.bool("多线程下载(aria2)", cfg::isAria2Download, cfg::setAria2Download));
+        options.add(ConfigOption.string("aria2c 路径（留空自动探测）", cfg::getAria2BinPath, cfg::setAria2BinPath));
     }
 
     private static String modeId(String display) {
