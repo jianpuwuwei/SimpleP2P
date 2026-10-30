@@ -351,8 +351,12 @@ public final class BinaryInstaller {
     private static boolean tryAria2(ExtPaths.ExtTool t, List<String> urls, File target, ProgressListener l) {
         if (!ModConfig.getInstance().isAria2Download()) return false;
         try {
-            // aria2c 已内置于 mod 资源，binary() 会在首次使用时释放到受管目录
-            if (Aria2Downloader.binary() == null) return false;
+            if (Aria2Downloader.binary() == null) {
+                // 非 Windows 平台未安装 aria2c：提示安装命令，随后回退单线程（不自动安装）
+                String hint = Aria2Downloader.installHint();
+                if (hint != null && l != null) l.onProgress(hint, 0, 0);
+                return false;
+            }
             l.onProgress("下载 " + describe(t) + " ...", 0, 0);
             return Aria2Downloader.download(urls, target, l);
         } catch (Throwable e) {
